@@ -1,6 +1,6 @@
 {
-  "name": "twodjenga",
-  "description": "2D Jenga — a turn-based square-stacking physics game for phones",
+  "name": "stacktics",
+  "description": "Stacktics — a turn-based block-stacking physics game for phones",
   "scripts": {
     "start": "node server.js"
   },

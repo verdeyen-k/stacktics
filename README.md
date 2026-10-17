@@ -1,14 +1,17 @@
-# 2D Jenga
+# Stacktics
 
-A turn-based square-stacking physics game for phones. Take turns dropping squares onto a wobbly tower.
-Every square that falls off the platform gives ★1 to everyone whose turn it *isn't*. Spend ★ on power-ups:
+Stacking with tactics: a turn-based block-stacking physics game for phones. Take turns dropping blocks onto a wobbly tower.
+Every block that falls off the platform gives ★1 to everyone whose turn it *isn't*. Spend ★ on power-ups:
 
 | Power-up | Cost | Effect |
 |---|---|---|
-| 🤏 Tiny | ★1 | Smaller square |
-| 🐘 Huge | ★1 | Bigger square |
+| 🤏 Tiny | ★1 | Smaller block |
+| 🐘 Huge | ★1 | Bigger block |
+| ↔️ Long | ★1 | Doubles the block's length; buy it again to keep stretching (up to 360 wide) |
 | 🍯 Glue | ★2 | Sticks to whatever it touches (bonds can snap) |
-| 🧲 Magnet | ★3 | Keeps pulling nearby squares toward it |
+| 🧽 Slippery | ★2 | A soapy sponge: slides on everything and soaks the blocks it touches so they slide too |
+| 🧲 Magnet | ★3 | Keeps pulling nearby blocks toward it |
+| ⏩ Rush | ★4 | The next player's turn starts 0.6s after your drop, whether the tower has settled or not |
 
 First to ★10 wins.
 

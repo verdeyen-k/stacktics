@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#1b1640">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<title>2D Jenga</title>
+<title>Stacktics</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&display=swap" rel="stylesheet">
 <style>
@@ -81,7 +81,11 @@
   .shop button { border-radius: 14px; border: 2px solid var(--line); background: rgba(255,255,255,.1); padding: 6px 2px; cursor: pointer;
     display: flex; flex-direction: column; align-items: center; line-height: 1.1; font-size: 13px; transition: transform .08s; }
   .shop button .ic { font-size: 22px; }
+  .shop button { position: relative; }
   .shop button .cost { color: var(--accent); font-weight: 700; }
+  .shop button .cnt { position: absolute; top: -6px; right: -4px; background: var(--accent); color: #2b1d00; border-radius: 8px;
+    padding: 0 5px; font-size: 12px; font-weight: 700; }
+  .shop button .cnt:empty { display: none; }
   .shop button.owned { border-color: var(--accent); background: rgba(255,184,77,.22); }
   .shop button:disabled:not(.owned) { opacity: .35; }
   .shop button:active:not(:disabled) { transform: scale(.94); }
@@ -114,7 +118,7 @@
     <i style="left:56px;bottom:76px;width:22px;height:22px;background:var(--p3);transform:rotate(-8deg)"></i>
     <i class="base"></i>
   </div>
-  <h1>2D Jenga<small>STACK · WOBBLE · TOPPLE</small></h1>
+  <h1>Stacktics<small>STACKING · WITH · TACTICS</small></h1>
   <div class="panel">
     <input class="field" id="name" placeholder="Your name" maxlength="12" autocomplete="off">
     <button class="btn primary" id="btn-local">Play on this phone</button>
@@ -160,10 +164,12 @@
   <h2>How to play</h2>
   <div class="panel">
     <ul class="rules">
-      <li>Take turns dropping a square onto the tower. Drag anywhere to slide it, use ⟲ ⟳ to tilt it, then hit <b>Drop</b>.</li>
-      <li>Every square that falls off the platform gives <b>★1</b> to everyone whose turn it <i>isn't</i>.</li>
-      <li>Spend ★ on power-ups for your next square:
-        🤏 <b>Tiny</b>, 🐘 <b>Huge</b>, 🍯 <b>Glue</b> (sticks to whatever it touches), 🧲 <b>Magnet</b> (pulls nearby squares in).</li>
+      <li>Take turns dropping a block onto the tower. Drag anywhere to slide it, use ⟲ ⟳ to tilt it, then hit <b>Drop</b>.</li>
+      <li>Every block that falls off the platform gives <b>★1</b> to everyone whose turn it <i>isn't</i>.</li>
+      <li>Spend ★ on power-ups for your block:
+        🤏 <b>Tiny</b>, 🐘 <b>Huge</b>, ↔️ <b>Long</b> (doubles the length, buy it again to keep stretching),
+        🍯 <b>Glue</b> (sticks to whatever it touches), 🧽 <b>Slippery</b> (a soapy sponge that makes what it touches slide),
+        🧲 <b>Magnet</b> (pulls nearby blocks in), ⏩ <b>Rush</b> (the next player's turn starts before the tower settles — anything that falls is on them).</li>
       <li>First to <b>★10</b> wins. Spending is a gamble!</li>
     </ul>
     <button class="btn primary" data-back>Got it</button>

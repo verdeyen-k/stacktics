@@ -184,7 +184,7 @@
           if (!nb || !pb) return bl;
           let da = nb[3] - pb[3];
           if (da > Math.PI) da -= 2 * Math.PI; else if (da < -Math.PI) da += 2 * Math.PI;
-          return [bl[0], pb[1] + (nb[1] - pb[1]) * k, pb[2] + (nb[2] - pb[2]) * k, pb[3] + da * k, bl[4], bl[5], bl[6]];
+          return [bl[0], pb[1] + (nb[1] - pb[1]) * k, pb[2] + (nb[2] - pb[2]) * k, pb[3] + da * k, ...bl.slice(4)];
         });
         return { ...latest, blocks };
       },
@@ -196,6 +196,7 @@
   // ── Game events → effects & toasts ──────────────────────────────
   const effects = [];
   function toast(text, color) {
+    document.querySelectorAll('.toast').forEach(t => t.remove());
     const el = document.createElement('div');
     el.className = 'toast';
     el.textContent = text;
@@ -229,6 +230,10 @@
         const p = playerOf(snap, e.player), item = SHOP[e.item];
         if (p) toast(`${p.name}: ${item.icon} ${item.label}!`, COLORS[p.color]);
       }
+      if (e.type === 'rushed') {
+        const p = playerOf(snap, e.player);
+        if (p) toast(`⏩ Rushed! ${p.name} goes now`, COLORS[p.color]);
+      }
       if (e.type === 'win') buzz([40, 60, 40]);
     }
   }
@@ -256,7 +261,7 @@
 
   function towerTop(snap) {
     let top = 0;
-    for (const b of snap.blocks) if (!(b[6] & 4)) top = Math.min(top, b[2] - b[4] * 0.71);
+    for (const b of snap.blocks) if (!(b[7] & 4)) top = Math.min(top, b[2] - Math.hypot(b[4], b[5]) / 2);
     return top;
   }
 
@@ -264,7 +269,7 @@
     view.top = $('hud').getBoundingClientRect().bottom + 6;
     view.bottom = $('controls').getBoundingClientRect().top;
     const avail = Math.max(100, view.bottom - view.top);
-    const top = snap.hover ? snap.hover.y - snap.hover.s - 30 : towerTop(snap) - 200;
+    const top = snap.hover ? snap.hover.y - snap.hover.h - 30 : towerTop(snap) - 200;
     const fitW = view.w / 440;
     const minScale = fitW * 0.4;
     let scale = Math.min(fitW, avail / (120 - top));
@@ -286,8 +291,8 @@
     ctx.closePath();
   }
 
-  function drawBlock(x, y, a, s, c, flags, alpha = 1) {
-    const h = s / 2, r = s * 0.14;
+  function drawBlock(x, y, a, bw, bh, c, flags, alpha = 1) {
+    const hw = bw / 2, h = bh / 2, s = bh, r = s * 0.14;
     ctx.save();
     ctx.translate(x, y);
     ctx.rotate(a);
@@ -295,28 +300,51 @@
     ctx.shadowColor = 'rgba(0,0,0,0.35)';
     ctx.shadowBlur = 8;
     ctx.shadowOffsetY = 3;
-    roundRect(-h, -h, s, s, r);
-    ctx.fillStyle = COLORS[c];
+    roundRect(-hw, -h, bw, bh, r);
+    ctx.fillStyle = flags & 8 ? '#ffe27a' : COLORS[c];
     ctx.fill();
     ctx.shadowColor = 'transparent';
-    ctx.lineWidth = 2;
+    ctx.lineWidth = flags & 8 ? 4 : 2;
     ctx.strokeStyle = DARK[c];
     ctx.stroke();
     ctx.fillStyle = 'rgba(255,255,255,0.28)';
-    roundRect(-h + 4, -h + 4, s - 8, s * 0.22, r * 0.6);
+    roundRect(-hw + 4, -h + 4, bw - 8, s * 0.22, r * 0.6);
     ctx.fill();
     ctx.fillStyle = 'rgba(0,0,0,0.13)';
-    roundRect(-h + 4, h - 4 - s * 0.16, s - 8, s * 0.16, r * 0.6);
+    roundRect(-hw + 4, h - 4 - s * 0.16, bw - 8, s * 0.16, r * 0.6);
     ctx.fill();
+
+    if (flags & 8) { // sponge: pores and soap bubbles
+      ctx.fillStyle = 'rgba(190, 140, 20, 0.45)';
+      for (let i = 0; i < Math.round(bw / s * 6); i++) {
+        const px = -hw + ((i * 0.618 + 0.2) % 1) * bw, py = -h + ((i * 0.382 + 0.3) % 1) * bh;
+        ctx.beginPath(); ctx.ellipse(px, py, s * 0.06, s * 0.045, i, 0, Math.PI * 2); ctx.fill();
+      }
+      ctx.strokeStyle = 'rgba(200, 240, 255, 0.9)';
+      ctx.lineWidth = 1.5;
+      for (const [fx, fr] of [[-0.3, 0.1], [0.05, 0.14], [0.32, 0.08]]) {
+        ctx.beginPath(); ctx.arc(fx * bw, -h - s * fr, s * fr, 0, Math.PI * 2); ctx.stroke();
+      }
+    } else if (flags & 16) { // soaked: wet shine and blue drips
+      ctx.fillStyle = 'rgba(160, 220, 255, 0.35)';
+      roundRect(-hw, -h, bw, bh, r);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,0.7)';
+      ctx.lineWidth = s * 0.06;
+      ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(-hw + s * 0.25, h - s * 0.3); ctx.lineTo(-hw + s * 0.55, -h + s * 0.25); ctx.stroke();
+      ctx.fillStyle = 'rgba(120, 200, 255, 0.9)';
+      for (const fx of [-0.3, 0.25]) { ctx.beginPath(); ctx.arc(fx * bw, h + s * 0.06, s * 0.05, 0, Math.PI * 2); ctx.fill(); }
+    }
 
     if (flags & 1) { // glue: honey border with drips
       ctx.strokeStyle = 'rgba(255, 190, 40, 0.95)';
       ctx.lineWidth = Math.max(3, s * 0.08);
-      roundRect(-h, -h, s, s, r);
+      roundRect(-hw, -h, bw, bh, r);
       ctx.stroke();
       ctx.fillStyle = 'rgba(255, 190, 40, 0.95)';
       for (const fx of [-0.25, 0.1, 0.3]) {
-        const dx = fx * s, len = s * (0.12 + Math.abs(fx) * 0.2);
+        const dx = fx * bw, len = s * (0.12 + Math.abs(fx) * 0.2);
         ctx.fillRect(dx - s * 0.035, h - 2, s * 0.07, len);
         ctx.beginPath(); ctx.arc(dx, h - 2 + len, s * 0.055, 0, Math.PI * 2); ctx.fill();
       }
@@ -391,7 +419,7 @@
       ctx.fillText(`${(-top / 44).toFixed(1)} squares tall`, (w - ox) / s - 10 / s, top - 6 / s);
     }
 
-    for (const b of snap.blocks) drawBlock(b[1], b[2], b[3], b[4], b[5], b[6], b[6] & 4 ? 0.6 : 1);
+    for (const b of snap.blocks) drawBlock(b[1], b[2], b[3], b[4], b[5], b[6], b[7], b[7] & 4 ? 0.6 : 1);
 
     ctx.fillStyle = 'rgba(255, 190, 40, 0.95)';
     for (const [gx, gy] of snap.glue) { ctx.beginPath(); ctx.arc(gx, gy, 3.5, 0, Math.PI * 2); ctx.fill(); }
@@ -402,10 +430,16 @@
       ctx.setLineDash([4, 6]);
       ctx.strokeStyle = 'rgba(255,255,255,0.35)';
       ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.moveTo(x, hv.y + hv.s / 2 + 6); ctx.lineTo(x, 0); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(x, hv.y + hv.h / 2 + 6); ctx.lineTo(x, 0); ctx.stroke();
       ctx.setLineDash([]);
       const bob = Math.sin(now / 300) * 3;
-      drawBlock(x, hv.y + bob, hv.a, hv.s, hv.c, (hv.g ? 1 : 0) | (hv.m ? 2 : 0), 0.92);
+      drawBlock(x, hv.y + bob, hv.angle, hv.w, hv.h, hv.c, (hv.glue ? 1 : 0) | (hv.magnet ? 2 : 0) | (hv.sponge ? 8 : 0), 0.92);
+      if (hv.rush) {
+        ctx.font = `700 ${16 / s}px Fredoka, system-ui, sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#ffb84d';
+        ctx.fillText('⏩ RUSH', x, hv.y - hv.h / 2 - 14 / s);
+      }
     }
 
     // Particles & floating text
@@ -440,7 +474,7 @@
   for (const [key, item] of Object.entries(SHOP)) {
     const b = document.createElement('button');
     b.dataset.item = key;
-    b.innerHTML = `<span class="ic">${item.icon}</span><span>${item.label}</span><span class="cost">★${item.cost}</span>`;
+    b.innerHTML = `<span class="ic">${item.icon}</span><span>${item.label}</span><span class="cost">★${item.cost}</span><span class="cnt"></span>`;
     b.title = item.desc;
     b.onclick = () => session && session.act('buy', { item: key });
     shopEl.appendChild(b);
@@ -477,10 +511,11 @@
     const hv = snap.hover;
     for (const b of shopEl.children) {
       const it = b.dataset.item;
-      const owned = !!hv && ((it === 'glue' && hv.g) || (it === 'magnet' && hv.m) || hv.mod === it);
-      const blocked = !!hv && (it === 'small' || it === 'big') && !!hv.mod;
+      const owned = !!hv && (it === 'long' ? hv.len > 1 : it === 'small' || it === 'big' ? hv.sizeMod === it : hv[it]);
+      const badge = it === 'long' && hv && hv.len > 1 ? `×${hv.len}` : '';
+      if (b.dataset.badge !== badge) { b.dataset.badge = badge; b.querySelector('.cnt').textContent = badge; }
       b.classList.toggle('owned', owned && mine);
-      b.disabled = !mine || owned || blocked || !me || me.points < SHOP[it].cost;
+      b.disabled = !mine || !hv || !SHOP[it].ok(hv) || !me || me.points < SHOP[it].cost;
     }
     for (const id of ['btn-drop', 'btn-rot-l', 'btn-rot-r']) $(id).disabled = !mine;
     $('controls').style.opacity = mine || snap.phase === 'over' ? 1 : 0.55;
@@ -503,7 +538,7 @@
 
   function setAim(x) {
     if (!myTurn(current) || !current.hover) return;
-    const half = current.hover.s / 2;
+    const half = Math.min(current.hover.halfX, WORLD_W / 2);
     aimX = Math.max(half, Math.min(WORLD_W - half, x));
     session.act('aim', { x: aimX });
   }

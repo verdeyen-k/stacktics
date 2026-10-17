@@ -134,4 +134,4 @@ wss.on('connection', ws => {
   ws.on('close', () => leave(ws));
 });
 
-httpServer.listen(PORT, () => console.log(`2D Jenga running on http://localhost:${PORT}`));
+httpServer.listen(PORT, () => console.log(`Stacktics running on http://localhost:${PORT}`));

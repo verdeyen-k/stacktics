@@ -21,12 +21,30 @@
   const MAGNET_PULL  = 0.0007; // gravity is 0.001 * mass per tick, for comparison
   const GLUE_BONDS   = 4;
   const GLUE_STRETCH = 14;     // glue snaps if stretched further than this
+  const SLICK        = 0.02;   // friction of the sponge and anything it soaks
+  const MAX_W        = 360;    // widest a block may get
+  const RUSH_TIME    = 600;    // a rushed turn ends this long after the drop, moving or not
 
+  // The block being aimed: its height is base * scale, its width height * len.
+  const blockW = h => h.base * h.scale * h.len;
+  const blockH = h => h.base * h.scale;
+
+  // ok(hover) says whether the item can still be bought for this block; shared with the client's buttons.
   const SHOP = {
-    small:  { cost: 1, label: 'Tiny',   icon: '🤏', desc: 'Smaller square' },
-    big:    { cost: 1, label: 'Huge',   icon: '🐘', desc: 'Bigger square' },
-    glue:   { cost: 2, label: 'Glue',   icon: '🍯', desc: 'Sticks to what it touches' },
-    magnet: { cost: 3, label: 'Magnet', icon: '🧲', desc: 'Pulls nearby squares in' },
+    small:  { cost: 1, label: 'Tiny',     icon: '🤏', desc: 'Smaller block',
+              ok: h => !h.sizeMod,                                 apply: h => { h.sizeMod = 'small'; h.scale = 0.6; } },
+    big:    { cost: 1, label: 'Huge',     icon: '🐘', desc: 'Bigger block',
+              ok: h => !h.sizeMod && blockW(h) * 1.5 <= MAX_W,     apply: h => { h.sizeMod = 'big'; h.scale = 1.5; } },
+    long:   { cost: 1, label: 'Long',     icon: '↔️', desc: 'Doubles the length — buy again to keep stretching',
+              ok: h => blockW(h) * 2 <= MAX_W,                     apply: h => { h.len *= 2; } },
+    glue:   { cost: 2, label: 'Glue',     icon: '🍯', desc: 'Sticks to what it touches',
+              ok: h => !h.glue && !h.sponge,                       apply: h => { h.glue = true; } },
+    sponge: { cost: 2, label: 'Slippery', icon: '🧽', desc: 'A soapy sponge that makes whatever it touches slippery',
+              ok: h => !h.sponge && !h.glue,                       apply: h => { h.sponge = true; } },
+    magnet: { cost: 3, label: 'Magnet',   icon: '🧲', desc: 'Pulls nearby blocks in',
+              ok: h => !h.magnet,                                  apply: h => { h.magnet = true; } },
+    rush:   { cost: 4, label: 'Rush',     icon: '⏩', desc: "Next player's turn starts before the tower settles",
+              ok: h => !h.rush,                                    apply: h => { h.rush = true; } },
   };
 
   const r1 = n => Math.round(n * 10) / 10;
@@ -62,7 +80,8 @@
       this.phase = 'aim';
       this.phaseStart = this.time;
       const base = BASE_SIZE * (0.85 + Math.random() * 0.3);
-      this.hover = { x: WORLD_W / 2, angle: 0, base, size: base, glue: false, magnet: false, sizeMod: null };
+      this.hover = { x: WORLD_W / 2, angle: 0, base, scale: 1, len: 1, sizeMod: null,
+                     glue: false, magnet: false, sponge: false, rush: false };
       this.events.push({ type: 'turn', player: this.active.id });
     }
 
@@ -83,49 +102,50 @@
       return top;
     }
 
-    hoverY() { return this.towerTop() - DROP_GAP - this.hover.size / 2; }
+    // Half the hover block's rotated extent along x / y.
+    halfX() { const h = this.hover, a = h.angle; return (Math.abs(blockW(h) * Math.cos(a)) + Math.abs(blockH(h) * Math.sin(a))) / 2; }
+    halfY() { const h = this.hover, a = h.angle; return (Math.abs(blockW(h) * Math.sin(a)) + Math.abs(blockH(h) * Math.cos(a))) / 2; }
+
+    hoverY() { return this.towerTop() - DROP_GAP - this.halfY(); }
 
     // ── Player actions (ignored unless it's that player's aim phase) ─
     canAct(pid) { return this.phase === 'aim' && this.active && this.active.id === pid; }
 
     aim(pid, x) {
       if (!this.canAct(pid) || typeof x !== 'number' || !isFinite(x)) return;
-      const half = this.hover.size / 2;
+      const half = Math.min(this.halfX(), WORLD_W / 2);
       this.hover.x = Math.max(half, Math.min(WORLD_W - half, x));
     }
 
     rotate(pid, dir) {
       if (!this.canAct(pid)) return;
       const step = Math.PI / 12;
-      this.hover.angle = ((this.hover.angle + (dir < 0 ? -step : step)) % (Math.PI / 2) + Math.PI / 2) % (Math.PI / 2);
+      this.hover.angle = ((this.hover.angle + (dir < 0 ? -step : step)) % Math.PI + Math.PI) % Math.PI;
+      this.aim(pid, this.hover.x); // re-clamp: a tilted long block is a different width
     }
 
     buy(pid, item) {
       if (!this.canAct(pid) || !SHOP[item]) return;
-      const p = this.active, h = this.hover, cost = SHOP[item].cost;
-      if (p.points < cost) return;
-      if ((item === 'small' || item === 'big') && h.sizeMod) return;
-      if ((item === 'glue' && h.glue) || (item === 'magnet' && h.magnet)) return;
-      p.points -= cost;
-      if (item === 'small') { h.sizeMod = 'small'; h.size = h.base * 0.6; }
-      if (item === 'big')   { h.sizeMod = 'big';   h.size = h.base * 1.5; }
-      if (item === 'glue')   h.glue = true;
-      if (item === 'magnet') h.magnet = true;
-      this.aim(pid, h.x); // re-clamp in case the square grew
+      const p = this.active, h = this.hover, it = SHOP[item];
+      if (p.points < it.cost || !it.ok(h)) return;
+      p.points -= it.cost;
+      it.apply(h);
+      this.aim(pid, h.x); // re-clamp in case the block grew
       this.events.push({ type: 'buy', player: pid, item });
     }
 
     drop(pid) {
       if (!this.canAct(pid)) return;
-      const h = this.hover, s = h.size;
-      const body = Bodies.rectangle(h.x, this.hoverY(), s, s, {
-        angle: h.angle, chamfer: { radius: s * 0.12 },
-        friction: 0.7, frictionStatic: 1, restitution: 0.02, density: 0.0015,
+      const h = this.hover, w = blockW(h), ht = blockH(h);
+      const body = Bodies.rectangle(h.x, this.hoverY(), w, ht, {
+        angle: h.angle, chamfer: { radius: ht * 0.12 },
+        friction: h.sponge ? SLICK : 0.7, frictionStatic: 1, restitution: 0.02, density: 0.0015,
       });
       Object.assign(body, {
-        gid: this.nextId++, size: s, color: this.active.color,
-        glue: h.glue, magnet: h.magnet, bonds: 0, fallen: false,
+        gid: this.nextId++, w, h: ht, color: this.active.color,
+        glue: h.glue, magnet: h.magnet, sponge: h.sponge, slick: h.sponge, bonds: 0, fallen: false,
       });
+      this.rush = h.rush;
       Composite.add(this.engine.world, body);
       this.blocks.push(body);
       this.phase = 'settle';
@@ -167,7 +187,11 @@
           (Vector.magnitude(b.velocity) > 0.15 || Math.abs(b.angularVelocity) > 0.005));
         this.calm = moving ? 0 : this.calm + 1;
         const elapsed = this.time - this.phaseStart;
-        if ((elapsed > 600 && this.calm > 30) || elapsed > 8000) this.endTurn();
+        const rushed = this.rush && elapsed > RUSH_TIME;
+        if ((elapsed > 600 && this.calm > 30) || elapsed > 8000 || rushed) {
+          this.endTurn();
+          if (rushed && this.phase === 'aim') this.events.push({ type: 'rushed', player: this.active.id });
+        }
       }
     }
 
@@ -187,9 +211,13 @@
     }
 
     onCollide(pairs) {
-      // Queue bonds; adding constraints mid-update is asking for trouble.
       for (const pair of pairs) {
         const a = pair.bodyA.parent, b = pair.bodyB.parent;
+        // The sponge soaks whatever loose block it touches (but not the platform, and soaked blocks don't spread it).
+        for (const [sp, o] of [[a, b], [b, a]]) {
+          if (sp.sponge && !o.isStatic && !o.slick) { o.slick = true; o.friction = SLICK; }
+        }
+        // Queue bonds; adding constraints mid-update is asking for trouble.
         if (!a.glue && !b.glue) continue;
         const points = pair.collision.supports.filter(Boolean).slice(0, 2).map(p => ({ x: p.x, y: p.y }));
         if (points.length) this.pendingGlue.push({ a, b, points });
@@ -263,11 +291,11 @@
         timeLeft: this.phase === 'aim' ? Math.max(0, Math.round(AIM_TIME - (this.time - this.phaseStart))) : null,
         players: this.players.map(p => ({ id: p.id, name: p.name, color: p.color, points: p.points })),
         hover: this.phase === 'aim' ? {
-          x: r1(h.x), y: r1(this.hoverY()), s: r1(h.size), a: r3(h.angle),
-          g: h.glue, m: h.magnet, mod: h.sizeMod, c: this.active.color,
+          ...h, x: r1(h.x), angle: r3(h.angle), y: r1(this.hoverY()),
+          w: r1(blockW(h)), h: r1(blockH(h)), halfX: r1(this.halfX()), c: this.active.color,
         } : null,
-        blocks: this.blocks.map(b => [b.gid, r1(b.position.x), r1(b.position.y), r3(b.angle), r1(b.size), b.color,
-          (b.glue ? 1 : 0) | (b.magnet ? 2 : 0) | (b.fallen ? 4 : 0)]),
+        blocks: this.blocks.map(b => [b.gid, r1(b.position.x), r1(b.position.y), r3(b.angle), r1(b.w), r1(b.h), b.color,
+          (b.glue ? 1 : 0) | (b.magnet ? 2 : 0) | (b.fallen ? 4 : 0) | (b.sponge ? 8 : 0) | (b.slick ? 16 : 0)]),
         glue: this.glues.filter(c => !c.strut).map(c => {
           const p = Vector.add(c.bodyA.position, c.pointA);
           return [r1(p.x), r1(p.y)];
