@@ -1,0 +1,11 @@
+{
+  "name": "twodjenga",
+  "description": "2D Jenga — a turn-based square-stacking physics game for phones",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "matter-js": "^0.20.0",
+    "ws": "^8.18.0"
+  }
+}

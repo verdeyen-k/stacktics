@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#1b1640">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>2D Jenga</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg1: #1b1640; --bg2: #3a2a6b;
+    --ink: #fff7ec; --muted: #b9b0d8;
+    --card: rgba(255,255,255,0.08); --line: rgba(255,255,255,0.14);
+    --p0: #ff6b6b; --p1: #4dabf7; --p2: #ffd43b; --p3: #69db7c;
+    --accent: #ffb84d;
+    --safe-t: env(safe-area-inset-top, 0px); --safe-b: env(safe-area-inset-bottom, 0px);
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg1); color: var(--ink);
+    font-family: 'Fredoka', ui-rounded, 'SF Pro Rounded', system-ui, sans-serif; user-select: none; -webkit-user-select: none; }
+  button, input { font: inherit; color: inherit; }
+  [hidden] { display: none !important; }
+
+  /* ── Menu screens ── */
+  .screen { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 16px; padding: calc(24px + var(--safe-t)) 20px calc(24px + var(--safe-b));
+    background: radial-gradient(120% 80% at 50% 0%, var(--bg2), var(--bg1)); overflow-y: auto; }
+  .panel { width: 100%; max-width: 360px; display: flex; flex-direction: column; gap: 12px; }
+  h1 { margin: 0; font-size: clamp(44px, 14vw, 64px); line-height: 0.95; text-align: center; letter-spacing: 1px; }
+  h1 small { display: block; font-size: 0.32em; color: var(--muted); letter-spacing: 3px; margin-top: 8px; font-weight: 500; }
+  h2 { margin: 0; text-align: center; font-size: 26px; }
+  .logo { position: relative; width: 120px; height: 110px; margin-bottom: 4px; }
+  .logo i { position: absolute; border-radius: 6px; box-shadow: inset 0 -5px 0 rgba(0,0,0,.18), inset 0 4px 0 rgba(255,255,255,.25); }
+  .logo .base { left: 10px; right: 10px; bottom: 0; height: 12px; background: #8f84c4; border-radius: 4px; }
+  input.field { width: 100%; padding: 14px 16px; border-radius: 14px; border: 2px solid var(--line); background: var(--card);
+    font-size: 18px; outline: none; user-select: text; -webkit-user-select: text; }
+  input.field:focus { border-color: var(--accent); }
+  input.code { text-transform: uppercase; letter-spacing: 6px; text-align: center; font-weight: 700; }
+  .btn { border: 0; border-radius: 16px; padding: 15px 18px; font-size: 19px; font-weight: 600; cursor: pointer;
+    background: var(--card); border: 2px solid var(--line); transition: transform .08s, filter .15s; }
+  .btn:active:not(:disabled) { transform: scale(.96); }
+  .btn:disabled { opacity: .4; cursor: default; }
+  .btn.primary { background: var(--accent); color: #2b1d00; border-color: transparent; box-shadow: 0 5px 0 #c17c18; }
+  .btn.primary:active:not(:disabled) { box-shadow: 0 2px 0 #c17c18; transform: translateY(3px); }
+  .row { display: flex; gap: 10px; }
+  .row > * { flex: 1; min-width: 0; }
+  .divider { text-align: center; color: var(--muted); font-size: 14px; }
+  .error { color: #ff9b9b; text-align: center; min-height: 1.2em; font-size: 15px; }
+  .hint { color: var(--muted); text-align: center; font-size: 15px; margin: 0; }
+  .roomcode { font-size: 56px; font-weight: 700; letter-spacing: 10px; text-align: center; color: var(--accent); }
+  .plist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+  .plist li { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-radius: 14px; background: var(--card); font-size: 18px; }
+  .swatch { width: 22px; height: 22px; border-radius: 6px; flex: none; box-shadow: inset 0 -3px 0 rgba(0,0,0,.2); }
+  .tag { margin-left: auto; font-size: 13px; color: var(--muted); }
+  .counts { display: flex; gap: 8px; }
+  .counts button { flex: 1; }
+  .counts button.on { background: var(--accent); color: #2b1d00; border-color: transparent; }
+
+  /* ── Game screen ── */
+  #game { position: fixed; inset: 0; }
+  canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; display: block; }
+  .hud { position: absolute; left: 0; right: 0; top: 0; padding: calc(10px + var(--safe-t)) 12px 6px; pointer-events: none;
+    display: flex; flex-direction: column; gap: 8px; }
+  .scores { display: flex; gap: 6px; justify-content: center; flex-wrap: wrap; }
+  .score { display: flex; align-items: center; gap: 6px; padding: 6px 10px 6px 7px; border-radius: 12px; background: rgba(0,0,0,.28);
+    border: 2px solid transparent; font-size: 15px; transition: border-color .2s, transform .2s; max-width: 46%; }
+  .score.active { border-color: currentColor; transform: scale(1.06); }
+  .score .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); }
+  .score .pts { font-weight: 700; color: var(--ink); }
+  .score .pts::before { content: '★ '; color: var(--accent); }
+  .banner { text-align: center; font-size: 20px; font-weight: 600; text-shadow: 0 2px 8px rgba(0,0,0,.4); min-height: 1.3em; }
+  .banner .timer { color: #ff9b9b; margin-left: 6px; }
+  .menu-btn { position: absolute; top: calc(10px + var(--safe-t)); left: 10px; width: 38px; height: 38px; border-radius: 12px; border: 0;
+    background: rgba(0,0,0,.28); font-size: 18px; pointer-events: auto; cursor: pointer; }
+
+  .controls { position: absolute; left: 0; right: 0; bottom: 0; padding: 8px 12px calc(12px + var(--safe-b));
+    display: flex; flex-direction: column; gap: 8px; background: linear-gradient(transparent, rgba(10,6,30,.55) 30%); }
+  .shop { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+  .shop button { border-radius: 14px; border: 2px solid var(--line); background: rgba(255,255,255,.1); padding: 6px 2px; cursor: pointer;
+    display: flex; flex-direction: column; align-items: center; line-height: 1.1; font-size: 13px; transition: transform .08s; }
+  .shop button .ic { font-size: 22px; }
+  .shop button .cost { color: var(--accent); font-weight: 700; }
+  .shop button.owned { border-color: var(--accent); background: rgba(255,184,77,.22); }
+  .shop button:disabled:not(.owned) { opacity: .35; }
+  .shop button:active:not(:disabled) { transform: scale(.94); }
+  .actions { display: grid; grid-template-columns: 64px 1fr 64px; gap: 8px; }
+  .actions .btn { padding: 14px 0; font-size: 22px; }
+  .actions .drop { font-size: 22px; letter-spacing: 2px; }
+
+  .overlay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; padding: 20px;
+    background: rgba(12,8,32,.6); backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px); z-index: 5; }
+  .overlay .panel { background: var(--bg2); border-radius: 24px; padding: 24px; border: 2px solid var(--line); text-align: center; }
+  .big-emoji { font-size: 56px; }
+
+  .toast { position: absolute; left: 50%; top: 35%; transform: translate(-50%, -50%); padding: 12px 20px; border-radius: 16px;
+    background: rgba(0,0,0,.55); font-size: 22px; font-weight: 600; pointer-events: none; text-align: center;
+    animation: pop 1.6s ease forwards; white-space: nowrap; z-index: 4; }
+  @keyframes pop { 0% { opacity: 0; transform: translate(-50%,-30%) scale(.8); } 12% { opacity: 1; transform: translate(-50%,-50%) scale(1.05); }
+    20% { transform: translate(-50%,-50%) scale(1); } 80% { opacity: 1; } 100% { opacity: 0; transform: translate(-50%,-70%); } }
+
+  .rules { font-size: 15px; color: var(--muted); line-height: 1.45; text-align: left; margin: 0; padding-left: 18px; }
+</style>
+</head>
+<body>
+
+<!-- Main menu -->
+<section class="screen" id="menu">
+  <div class="logo">
+    <i style="left:30px;bottom:12px;width:34px;height:34px;background:var(--p1)"></i>
+    <i style="left:66px;bottom:12px;width:26px;height:26px;background:var(--p0)"></i>
+    <i style="left:44px;bottom:46px;width:30px;height:30px;background:var(--p2);transform:rotate(12deg)"></i>
+    <i style="left:56px;bottom:76px;width:22px;height:22px;background:var(--p3);transform:rotate(-8deg)"></i>
+    <i class="base"></i>
+  </div>
+  <h1>2D Jenga<small>STACK · WOBBLE · TOPPLE</small></h1>
+  <div class="panel">
+    <input class="field" id="name" placeholder="Your name" maxlength="12" autocomplete="off">
+    <button class="btn primary" id="btn-local">Play on this phone</button>
+    <button class="btn" id="btn-create">Create online room</button>
+    <div class="divider">or join a friend</div>
+    <div class="row">
+      <input class="field code" id="join-code" placeholder="CODE" maxlength="4" autocomplete="off">
+      <button class="btn" id="btn-join" style="flex:0 0 96px">Join</button>
+    </div>
+    <div class="error" id="menu-error"></div>
+    <button class="btn" id="btn-rules" style="font-size:16px;padding:10px">How to play</button>
+  </div>
+</section>
+
+<!-- Pass-and-play setup -->
+<section class="screen" id="local" hidden>
+  <h2>Pass &amp; play</h2>
+  <div class="panel">
+    <div class="counts" id="local-counts">
+      <button class="btn on" data-n="2">2</button><button class="btn" data-n="3">3</button><button class="btn" data-n="4">4</button>
+    </div>
+    <div id="local-names" class="panel"></div>
+    <button class="btn primary" id="btn-local-start">Start</button>
+    <button class="btn" data-back>Back</button>
+  </div>
+</section>
+
+<!-- Online lobby -->
+<section class="screen" id="lobby" hidden>
+  <p class="hint">Room code</p>
+  <div class="roomcode" id="lobby-code">----</div>
+  <p class="hint">Friends open this page and enter the code</p>
+  <div class="panel">
+    <ul class="plist" id="lobby-players"></ul>
+    <button class="btn primary" id="btn-start">Start game</button>
+    <p class="hint" id="lobby-wait">Waiting for the host to start…</p>
+    <button class="btn" id="btn-leave">Leave</button>
+  </div>
+</section>
+
+<!-- Rules -->
+<section class="screen" id="rules" hidden>
+  <h2>How to play</h2>
+  <div class="panel">
+    <ul class="rules">
+      <li>Take turns dropping a square onto the tower. Drag anywhere to slide it, use ⟲ ⟳ to tilt it, then hit <b>Drop</b>.</li>
+      <li>Every square that falls off the platform gives <b>★1</b> to everyone whose turn it <i>isn't</i>.</li>
+      <li>Spend ★ on power-ups for your next square:
+        🤏 <b>Tiny</b>, 🐘 <b>Huge</b>, 🍯 <b>Glue</b> (sticks to whatever it touches), 🧲 <b>Magnet</b> (pulls nearby squares in).</li>
+      <li>First to <b>★10</b> wins. Spending is a gamble!</li>
+    </ul>
+    <button class="btn primary" data-back>Got it</button>
+  </div>
+</section>
+
+<!-- Game -->
+<section id="game" hidden>
+  <canvas id="canvas"></canvas>
+  <div class="hud" id="hud">
+    <div class="scores" id="scores"></div>
+    <div class="banner" id="banner"><span id="banner-text"></span><span class="timer" id="banner-timer"></span></div>
+  </div>
+  <button class="menu-btn" id="btn-quit" aria-label="Quit">✕</button>
+  <div class="controls" id="controls">
+    <div class="shop" id="shop"></div>
+    <div class="actions">
+      <button class="btn" id="btn-rot-l" aria-label="Tilt left">⟲</button>
+      <button class="btn primary drop" id="btn-drop">DROP</button>
+      <button class="btn" id="btn-rot-r" aria-label="Tilt right">⟳</button>
+    </div>
+  </div>
+  <div class="overlay" id="over" hidden>
+    <div class="panel">
+      <div class="big-emoji">🏆</div>
+      <h2 id="over-title">Winner!</h2>
+      <p class="hint" id="over-sub"></p>
+      <button class="btn primary" id="btn-rematch">Play again</button>
+      <button class="btn" id="btn-over-menu">Menu</button>
+    </div>
+  </div>
+  <div class="overlay" id="quit-confirm" hidden>
+    <div class="panel">
+      <h2>Leave this game?</h2>
+      <button class="btn primary" id="btn-quit-yes">Leave</button>
+      <button class="btn" id="btn-quit-no">Keep playing</button>
+    </div>
+  </div>
+</section>
+
+<script src="/vendor/matter.js"></script>
+<script>window.Matter || document.write('<script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.20.0/matter.min.js"><\/script>')</script>
+<script src="game.js"></script>
+<script src="client.js"></script>
+</body>
+</html>
