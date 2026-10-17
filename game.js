@@ -292,7 +292,7 @@
         players: this.players.map(p => ({ id: p.id, name: p.name, color: p.color, points: p.points })),
         hover: this.phase === 'aim' ? {
           ...h, x: r1(h.x), angle: r3(h.angle), y: r1(this.hoverY()),
-          w: r1(blockW(h)), h: r1(blockH(h)), halfX: r1(this.halfX()), c: this.active.color,
+          w: r1(blockW(h)), h: r1(blockH(h)), halfX: r1(this.halfX()), halfY: r1(this.halfY()), c: this.active.color,
         } : null,
         blocks: this.blocks.map(b => [b.gid, r1(b.position.x), r1(b.position.y), r3(b.angle), r1(b.w), r1(b.h), b.color,
           (b.glue ? 1 : 0) | (b.magnet ? 2 : 0) | (b.fallen ? 4 : 0) | (b.sponge ? 8 : 0) | (b.slick ? 16 : 0)]),

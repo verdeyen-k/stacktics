@@ -242,7 +242,8 @@
   const canvas = $('canvas');
   const ctx = canvas.getContext('2d');
   const view = { w: 0, h: 0, dpr: 1, top: 0, bottom: 0 };
-  const cam = { scale: 1, bottom: 120, init: false };
+  const cam = { scale: 1, init: false };
+  const VIEW_BOTTOM = 120; // world y pinned to the bottom of the play area, just below the platform
 
   function resize() {
     view.dpr = Math.min(window.devicePixelRatio || 1, 2.5);
@@ -261,7 +262,11 @@
 
   function towerTop(snap) {
     let top = 0;
-    for (const b of snap.blocks) if (!(b[7] & 4)) top = Math.min(top, b[2] - Math.hypot(b[4], b[5]) / 2);
+    for (const b of snap.blocks) {
+      if (b[7] & 4) continue;
+      const halfY = (Math.abs(b[4] * Math.sin(b[3])) + Math.abs(b[5] * Math.cos(b[3]))) / 2;
+      top = Math.min(top, b[2] - halfY);
+    }
     return top;
   }
 
@@ -269,16 +274,11 @@
     view.top = $('hud').getBoundingClientRect().bottom + 6;
     view.bottom = $('controls').getBoundingClientRect().top;
     const avail = Math.max(100, view.bottom - view.top);
-    const top = snap.hover ? snap.hover.y - snap.hover.h - 30 : towerTop(snap) - 200;
-    const fitW = view.w / 440;
-    const minScale = fitW * 0.4;
-    let scale = Math.min(fitW, avail / (120 - top));
-    let bottom = 120;
-    if (scale < minScale) { scale = minScale; bottom = top + avail / scale; } // too tall: zoom limit hit, follow the top
-    if (!cam.init) { cam.scale = scale; cam.bottom = bottom; cam.init = true; }
-    const k = 1 - Math.exp(-dt / 300);
-    cam.scale += (scale - cam.scale) * k;
-    cam.bottom += (bottom - cam.bottom) * k;
+    const top = snap.hover ? snap.hover.y - snap.hover.halfY - 30 : towerTop(snap) - 200;
+    // Always keep the platform in view: zoom out as far as the tower needs.
+    const scale = Math.min(view.w / 440, avail / (VIEW_BOTTOM - top));
+    if (!cam.init) { cam.scale = scale; cam.init = true; }
+    cam.scale += (scale - cam.scale) * (1 - Math.exp(-dt / 300));
   }
 
   function roundRect(x, y, w, h, r) {
@@ -374,7 +374,7 @@
 
     // Sky gets darker the higher you look.
     const g = ctx.createLinearGradient(0, 0, 0, h);
-    const height = Math.max(0, cam.bottom - 120) + (120 - towerTop(snap));
+    const height = -towerTop(snap);
     const t = Math.min(1, height / 1500);
     g.addColorStop(0, `hsl(${255 - t * 15}, 45%, ${16 - t * 8}%)`);
     g.addColorStop(1, `hsl(${265 - t * 20}, 40%, ${30 - t * 10}%)`);
@@ -382,7 +382,7 @@
     ctx.fillRect(0, 0, w, h);
 
     const s = cam.scale;
-    const ox = w / 2 - PLATFORM.x * s, oy = view.bottom - cam.bottom * s;
+    const ox = w / 2 - PLATFORM.x * s, oy = view.bottom - VIEW_BOTTOM * s;
     ctx.setTransform(dpr * s, 0, 0, dpr * s, dpr * ox, dpr * oy);
 
     for (const st of stars) {
