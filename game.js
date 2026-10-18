@@ -16,6 +16,7 @@
   const SEESAW_FALL_Y = 60; // ...lower on a seesaw, whose ends dip
   const KILL_Y    = 900;    // remove fallen blocks once they're well out of sight
   const DROP_GAP  = 120;    // how far above the tower the next square hovers
+  const DROP_CLEAR = 12;    // how far past the platform (or whatever overhangs it) a block can be dropped
   const TICK      = 1000 / 60;
   const AIM_TIME  = 30000;
   const TARGET    = 10;
@@ -152,15 +153,19 @@
     applySeesaw() {
       const p = this.plank;
       let torque = 0;
+      // The plank turns together with what's on it. Counting only its own inertia, it reacts a tick late to
+      // a heavy load (a long block, a tall tower), overshoots, and rocks harder and harder until it flings it.
+      let inertia = this.plankI;
       for (const [b, f] of this.free) {
         if (!b.parent || this.grabbed && this.grabbed.bodyB === b) continue; // gone, or held by a finger
         const jx = b.mass * (b.position.x - b.positionPrev.x - f.x);
         const jy = b.mass * (b.position.y - b.positionPrev.y - f.y);
         torque -= (b.position.x - p.position.x) * jy - (b.position.y - p.position.y) * jx;
         torque -= b.inertia * (b.angle - b.anglePrev - f.w);
+        if (!b.fallen) inertia += b.mass * ((b.position.x - p.position.x) ** 2 + (b.position.y - p.position.y) ** 2) + b.inertia;
       }
       torque -= SEESAW_SPRING * p.angle;
-      this.plankSpin = (this.plankSpin + torque / this.plankI) * (1 - SEESAW_DAMP);
+      this.plankSpin = (this.plankSpin + torque / inertia) * (1 - SEESAW_DAMP);
       let angle = p.angle + this.plankSpin;
       if (Math.abs(angle) > SEESAW.tilt) { // an end hits the ground
         angle = Math.sign(angle) * SEESAW.tilt;
@@ -244,10 +249,23 @@
     // ── Player actions (ignored unless it's that player's aim phase) ─
     canAct(pid) { return this.phase === 'aim' && this.active && this.active.id === pid; }
 
+    // Where the block can be aimed: across the world, and always far enough out that even the longest
+    // block can be dropped clean off either side, missing the platform and anything hanging over its edge.
+    aimRange() {
+      const half = this.halfX(), edge = (this.plank ? SEESAW.w : PLATFORM.w) / 2;
+      let left = PLATFORM.x - edge, right = PLATFORM.x + edge;
+      for (const b of this.blocks) {
+        if (b.fallen) continue;
+        left = Math.min(left, b.bounds.min.x);
+        right = Math.max(right, b.bounds.max.x);
+      }
+      return [Math.min(half, left - half - DROP_CLEAR), Math.max(WORLD_W - half, right + half + DROP_CLEAR)];
+    }
+
     aim(pid, x) {
       if (!this.canAct(pid) || typeof x !== 'number' || !isFinite(x)) return;
-      const half = Math.min(this.halfX(), WORLD_W / 2);
-      this.hover.x = Math.max(half, Math.min(WORLD_W - half, x));
+      const [lo, hi] = this.aimRange();
+      this.hover.x = Math.max(lo, Math.min(hi, x));
     }
 
     rotate(pid, dir) {
@@ -611,6 +629,7 @@
         hover: this.phase === 'aim' ? {
           ...h, x: r1(h.x), angle: r3(h.angle), y: r1(this.hoverY()),
           w: r1(blockW(h)), h: r1(blockH(h)), halfX: r1(this.halfX()), halfY: r1(this.halfY()), c: this.active.color,
+          range: this.aimRange().map(r1),
         } : null,
         blocks: this.blocks.map(b => [b.gid, r1(b.position.x), r1(b.position.y), r3(b.angle), r1(b.w), r1(b.h), b.color,
           (b.glue ? 1 : 0) | (b.magnet ? 2 : 0) | (b.fallen ? 4 : 0) | (b.sponge ? 8 : 0) | (b.slick ? 16 : 0) | (b.bouncy ? 32 : 0) | (b.flex ? 64 : 0), b.group]),

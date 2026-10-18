@@ -571,8 +571,11 @@
     view.bottom = $('controls').getBoundingClientRect().top;
     const avail = Math.max(100, view.bottom - view.top);
     const top = snap.hover ? snap.hover.y - snap.hover.halfY - 30 : towerTop(snap) - 200;
-    // Always keep the platform in view: zoom out as far as the tower needs.
-    const scale = Math.min(view.w / 440, avail / (VIEW_BOTTOM - top));
+    // Always keep the platform in view: zoom out as far as the tower needs, and wide enough to see the
+    // block anywhere it can be aimed (this depends only on the block, so it holds still while dragging).
+    const h = snap.hover;
+    const wide = h ? Math.max(220, ...h.range.map(x => Math.abs(x - PLATFORM.x) + h.halfX + 10)) : 220;
+    const scale = Math.min(view.w / (2 * wide), avail / (VIEW_BOTTOM - top));
     if (!cam.init) { cam.scale = scale; cam.init = true; }
     cam.scale += (scale - cam.scale) * (1 - Math.exp(-dt / 300));
   }
@@ -964,8 +967,8 @@
 
   function setAim(x) {
     if (!myTurn(current) || !current.hover) return;
-    const half = Math.min(current.hover.halfX, WORLD_W / 2);
-    aimX = Math.max(half, Math.min(WORLD_W - half, x));
+    const [lo, hi] = current.hover.range;
+    aimX = Math.max(lo, Math.min(hi, x));
     session.act('aim', { x: aimX });
   }
 
