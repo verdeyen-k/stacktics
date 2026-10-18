@@ -294,7 +294,8 @@
       const pref = ref.child('players/' + me);
       pref.onDisconnect().remove();
       await pref.set({ name, at: STAMP() });
-      room = { code, ref, me, isHost: create, host: info.host, seesaw: !!info.seesaw, players: [], gameNo: 0, subs: [] };
+      // mine: every player on this device. me is the first, and names the device.
+      room = { code, ref, me, mine: [me], isHost: create, host: info.host, seesaw: !!info.seesaw, players: [], gameNo: 0, subs: [] };
       watchRoom(room);
     } catch (e) {
       $('menu-error').textContent = 'Could not reach the game server.';
@@ -304,7 +305,7 @@
   function on(r, ref, event, fn) { ref.on(event, fn); r.subs.push(() => ref.off(event, fn)); }
 
   function watchRoom(r) {
-    const lobby = () => onServer({ t: 'lobby', code: r.code, you: r.me, host: r.host, players: r.players, game: r.gameNo, seesaw: r.seesaw });
+    const lobby = () => onServer({ t: 'lobby', code: r.code, mine: r.mine, host: r.host, players: r.players, game: r.gameNo, seesaw: r.seesaw });
     on(r, r.ref.child('host'), 'value', snap => {
       if (snap.val()) return;
       const wasPlaying = session && session.mode === 'net';
@@ -314,6 +315,7 @@
     on(r, r.ref.child('players'), 'value', snap => {
       const v = snap.val() || {};
       r.players = Object.keys(v).map(id => ({ id, name: v[id].name, at: v[id].at || 0 })).sort((a, b) => a.at - b.at);
+      r.mine = r.mine.filter(id => v[id]);
       if (r.isHost && r.game) {
         for (const p of [...r.game.players]) if (!v[p.id]) r.game.removePlayer(p.id);
       }
@@ -365,6 +367,24 @@
     r.ref.child('game').set(r.gameNo + 1);
   }
 
+  // Another player sharing this device. They play on this device's turns, like pass-and-play.
+  async function addLocalPlayer(name) {
+    const r = room;
+    if (!r || r.gameNo || r.players.length >= MAX_PLAYERS) return;
+    const pref = r.ref.child('players').push();
+    r.mine.push(pref.key);
+    pref.onDisconnect().remove();
+    await pref.set({ name, at: STAMP(), device: r.me });
+  }
+
+  function removeLocalPlayer(id) {
+    const r = room;
+    if (!r || id === r.me || !r.mine.includes(id)) return;
+    r.mine = r.mine.filter(m => m !== id);
+    r.ref.child('players/' + id).remove();
+    r.ref.child('players/' + id).onDisconnect().cancel();
+  }
+
   function leaveRoom() {
     const r = room;
     if (!r) return;
@@ -372,7 +392,7 @@
     clearInterval(r.loop);
     for (const off of r.subs) off();
     if (r.isHost) { r.ref.remove(); r.ref.onDisconnect().cancel(); }
-    else { r.ref.child('players/' + r.me).remove(); r.ref.child('players/' + r.me).onDisconnect().cancel(); }
+    else for (const id of r.mine) { r.ref.child('players/' + id).remove(); r.ref.child('players/' + id).onDisconnect().cancel(); }
   }
   window.addEventListener('pagehide', leaveRoom);
 
@@ -385,11 +405,17 @@
   $('join-code').addEventListener('keydown', e => { if (e.key === 'Enter') $('btn-join').click(); });
   $('btn-leave').onclick = () => { leaveRoom(); session = null; show('menu'); };
   $('btn-start').onclick = () => room && room.isHost && hostStart(room);
+  $('btn-add-local').onclick = () => {
+    const inp = $('add-local-name');
+    addLocalPlayer(inp.value.trim().slice(0, 12) || `Player ${room ? room.players.length + 1 : ''}`.trim());
+    inp.value = '';
+  };
+  $('add-local-name').addEventListener('keydown', e => { if (e.key === 'Enter') $('btn-add-local').click(); });
 
   function onServer(msg) {
     if (msg.t === 'lobby') {
       if (!session || session.mode !== 'net') session = room.isHost ? makeHostSession(room) : makeNetSession();
-      Object.assign(session, { me: msg.you, isHost: msg.host === msg.you, code: msg.code });
+      Object.assign(session, { me: msg.mine[0], mine: new Set(msg.mine), isHost: room.isHost, code: msg.code });
       if (msg.game) {
         if (session.gameNo !== msg.game) { session.gameNo = msg.game; session.buf = []; session.off = null; resetView(); setScienceUI(false); show('game'); }
         return;
@@ -402,9 +428,18 @@
         const li = document.createElement('li');
         li.innerHTML = `<span class="swatch" style="background:${COLORS[i]}"></span><span></span><span class="tag"></span>`;
         li.children[1].textContent = p.name;
-        li.children[2].textContent = [p.id === msg.host && 'host', p.id === msg.you && 'you'].filter(Boolean).join(' · ');
+        li.children[2].textContent = [p.id === msg.host && 'host', msg.mine.includes(p.id) && 'this device'].filter(Boolean).join(' · ');
+        if (msg.mine.includes(p.id) && p.id !== msg.mine[0]) {
+          const x = document.createElement('button');
+          x.className = 'remove';
+          x.textContent = '✕';
+          x.setAttribute('aria-label', `Remove ${p.name}`);
+          x.onclick = () => removeLocalPlayer(p.id);
+          li.appendChild(x);
+        }
         list.appendChild(li);
       });
+      $('add-local').hidden = msg.players.length >= MAX_PLAYERS;
       $('btn-start').hidden = !session.isHost;
       $('btn-start').disabled = msg.players.length < 2;
       $('btn-start').textContent = msg.players.length < 2 ? 'Need 2+ players' : 'Start game';
@@ -428,7 +463,7 @@
   function makeHostSession(r) {
     return {
       mode: 'net', buf: [], gameNo: 0,
-      act(a, d = {}) { hostAct(r, r.me, a, d); },
+      act(a, d = {}) { if (current && r.mine.includes(current.turn)) hostAct(r, current.turn, a, d); },
       update() { return r.game ? r.game.snapshot() : null; },
       rematch() { hostStart(r); },
       quit() { leaveRoom(); session = null; show('menu'); },
@@ -440,14 +475,14 @@
     return {
       mode: 'net', buf: [], gameNo: 0,
       act(a, d = {}) {
-        if (!['aim', 'rotate', 'buy', 'drop'].includes(a) || !room) return;
+        if (!['aim', 'rotate', 'buy', 'drop'].includes(a) || !room || !current || !room.mine.includes(current.turn)) return;
         if (a === 'aim' && !d.force) {
           const now = performance.now();
           if (now - lastAimSent < 66) return;
           lastAimSent = now;
         }
         const { force, ...rest } = d;
-        room.ref.child('acts').push({ p: room.me, a, ...rest });
+        room.ref.child('acts').push({ p: current.turn, a, ...rest });
       },
       // Render a little in the past and interpolate between the host's snapshots.
       update() {
@@ -490,6 +525,9 @@
     setTimeout(() => el.remove(), 1700);
   }
   const playerOf = (snap, id) => snap.players.find(p => p.id === id);
+  // Players on this device: all of them in pass-and-play; online, the ones that joined from here.
+  const isMine = id => session.mode === 'local' || !!(session.mine && session.mine.has(id));
+  const sharing = () => session.mode === 'net' && session.mine && session.mine.size > 1;
 
   function handleEvents(evs, snap) {
     for (const e of evs) {
@@ -498,7 +536,7 @@
         const p = playerOf(snap, e.player);
         if (!p) continue;
         if (session.mode === 'local') { toast(`${p.name}'s turn`, COLORS[p.color]); sfx.play('turn'); }
-        else if (e.player === session.me) { toast('Your turn!', COLORS[p.color]); buzz(30); sfx.play('turn'); }
+        else if (isMine(e.player)) { toast(sharing() ? `${p.name}'s turn!` : 'Your turn!', COLORS[p.color]); buzz(30); sfx.play('turn'); }
       }
       if (e.type === 'hit') sfx.play('hit', e.v, e.s);
       if (e.type === 'slide') sfx.play('slide', e.v);
@@ -893,8 +931,9 @@
 
   // ── HUD & controls ──────────────────────────────────────────────
   let lastScoresKey = '';
-  const myTurn = snap => snap && snap.phase === 'aim' && snap.turn === session.me;
-  const mePlayer = snap => snap.players.find(p => p.id === (session.mode === 'local' ? snap.turn : session.me));
+  const myTurn = snap => snap && snap.phase === 'aim' && isMine(snap.turn);
+  // Whose points the shop shows: the player up if they're on this device, otherwise our first player.
+  const mePlayer = snap => snap.players.find(p => p.id === (isMine(snap.turn) ? snap.turn : session.me)) || snap.players.find(p => isMine(p.id));
 
   const shopEl = $('shop');
   for (const [key, item] of Object.entries(SHOP)) {
@@ -917,7 +956,7 @@
         d.className = 'score' + (p.id === snap.turn && snap.phase !== 'over' ? ' active' : '');
         d.style.color = COLORS[p.color];
         d.innerHTML = `<span class="swatch" style="background:${COLORS[p.color]}"></span><span class="nm"></span><span class="pts">${p.points}</span>`;
-        d.querySelector('.nm').textContent = p.name + (session.mode === 'net' && p.id === session.me ? ' (you)' : '');
+        d.querySelector('.nm').textContent = p.name + (session.mode === 'net' && isMine(p.id) ? ' (you)' : '');
         box.appendChild(d);
       }
     }
@@ -926,7 +965,8 @@
     const mine = myTurn(snap);
     let banner = '', timer = '';
     if (snap.phase === 'aim' && active) {
-      banner = session.mode === 'local' ? `${active.name}'s turn` : mine ? 'Your turn — drag to aim' : `${active.name} is aiming…`;
+      banner = session.mode === 'local' ? `${active.name}'s turn`
+        : mine ? (sharing() ? `${active.name}'s turn — drag to aim` : 'Your turn — drag to aim') : `${active.name} is aiming…`;
       if (snap.science) banner = '🔬 Science mode · drag blocks to move them';
       if (snap.timeLeft != null && snap.timeLeft < 10000) timer = `${Math.ceil(snap.timeLeft / 1000)}s`;
     } else if (snap.phase === 'settle') banner = 'Wobble…';
@@ -952,7 +992,7 @@
     const over = snap.phase === 'over';
     if (over && $('over').hidden) {
       const w = playerOf(snap, snap.winner);
-      $('over-title').textContent = w ? (session.mode === 'net' && w.id === session.me ? 'You win!' : `${w.name} wins!`) : 'Game over';
+      $('over-title').textContent = w ? (session.mode === 'net' && isMine(w.id) && !sharing() ? 'You win!' : `${w.name} wins!`) : 'Game over';
       $('over-sub').textContent = snap.players.map(p => `${p.name} ★${p.points}`).join('   ');
       $('btn-rematch').hidden = !session.isHost;
       $('over-sub').textContent += session.isHost ? '' : '  ·  waiting for host…';

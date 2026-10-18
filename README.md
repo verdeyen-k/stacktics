@@ -28,7 +28,7 @@ npm start          # http://localhost:3002
 
 - **Play on this device**: pass-and-play for 2–4 players; the physics runs in the browser.
 - **🔬 Science mode**: a solo sandbox for learning how the pieces behave. There are no timers or scores, power-ups are free toggles that stay on between drops, and 🧹 clears the platform.
-- **Online**: create a room, and friends join with the 4-letter code (up to 4 players). The host's browser runs the physics and sends the tower to everyone through Firebase (`stacktics/rooms/<CODE>` in the `kvgames` Realtime Database), so everyone sees the same tower. The host needs to keep the game open on screen; if the host leaves, the room closes.
+- **Online**: create a room, and friends join with the 4-letter code (up to 4 players). The host's browser runs the physics and sends the tower to everyone through Firebase (`stacktics/rooms/<CODE>` in the `kvgames` Realtime Database), so everyone sees the same tower. The host needs to keep the game open on screen; if the host leaves, the room closes. Several people can share one device: add them in the room before starting (for example 2 on one phone and 1 or 2 on another), and they take their turns on that device.
 
 Pick **▬ Platform** or **⚖️ Seesaw** on the menu before starting any of these. On the seesaw the plank tips toward the heavier side, up to 15° each way, so keep the tower balanced. Online, the host's pick applies to the whole room.
 
