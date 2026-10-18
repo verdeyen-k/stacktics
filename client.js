@@ -259,6 +259,10 @@
     appId:             '1:463308384695:web:5d57623ebd52101ad26032',
   }), firebase.database()) : null;
   const ROOMS = 'stacktics/rooms';
+  // Bump whenever what the host sends (or expects) changes, along with the ?v= on the scripts in index.html.
+  // Devices on different versions can't play together, and phones can hang on to an old copy of the page.
+  const PROTOCOL = 3;
+  const OUTDATED = 'This room is on a different version of Stacktics. Everyone should refresh the page, then make a new room.';
   const MAX_PLAYERS = 4;
   const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   const STAMP = () => firebase.database.ServerValue.TIMESTAMP;
@@ -281,19 +285,19 @@
       } else {
         ref = db.ref(`${ROOMS}/${code}`);
         info = (await ref.once('value')).val();
-        const err = !info || !info.host ? 'Room not found' : info.game ? 'Game already started'
+        const err = !info || !info.host ? 'Room not found' : info.v !== PROTOCOL ? OUTDATED : info.game ? 'Game already started'
           : Object.keys(info.players || {}).length >= MAX_PLAYERS ? 'Room is full' : null;
         if (err) { $('menu-error').textContent = err; return; }
       }
       const me = ref.child('players').push().key;
       if (create) {
         ref.onDisconnect().remove(); // the room goes when its host does
-        await ref.set({ host: me, seesaw, game: 0, created: STAMP() });
+        await ref.set({ host: me, seesaw, game: 0, created: STAMP(), v: PROTOCOL });
         info.host = me;
       }
       const pref = ref.child('players/' + me);
       pref.onDisconnect().remove();
-      await pref.set({ name, at: STAMP() });
+      await pref.set({ name, at: STAMP(), v: PROTOCOL });
       // mine: every player on this device. me is the first, and names the device.
       room = { code, ref, me, mine: [me], isHost: create, host: info.host, seesaw: !!info.seesaw, players: [], gameNo: 0, subs: [] };
       watchRoom(room);
@@ -314,7 +318,8 @@
     });
     on(r, r.ref.child('players'), 'value', snap => {
       const v = snap.val() || {};
-      r.players = Object.keys(v).map(id => ({ id, name: v[id].name, at: v[id].at || 0 })).sort((a, b) => a.at - b.at);
+      r.players = Object.keys(v).map(id => ({ id, name: v[id].name, at: v[id].at || 0, current: v[id].v === PROTOCOL }))
+        .sort((a, b) => a.at - b.at);
       r.mine = r.mine.filter(id => v[id]);
       if (r.isHost && r.game) {
         for (const p of [...r.game.players]) if (!v[p.id]) r.game.removePlayer(p.id);
@@ -347,7 +352,7 @@
 
   // Host only: a new game with everyone in the room, stepped on a timer like the old server did.
   function hostStart(r) {
-    if (r.players.length < 2) return;
+    if (r.players.length < 2 || r.players.some(p => !p.current)) return;
     r.game = new Game(r.players.map(p => ({ id: p.id, name: p.name })), { seesaw: r.seesaw });
     clearInterval(r.loop);
     let last = performance.now(), acc = 0, ticks = 0;
@@ -374,7 +379,7 @@
     const pref = r.ref.child('players').push();
     r.mine.push(pref.key);
     pref.onDisconnect().remove();
-    await pref.set({ name, at: STAMP(), device: r.me });
+    await pref.set({ name, at: STAMP(), device: r.me, v: PROTOCOL });
   }
 
   function removeLocalPlayer(id) {
@@ -428,7 +433,8 @@
         const li = document.createElement('li');
         li.innerHTML = `<span class="swatch" style="background:${COLORS[i]}"></span><span></span><span class="tag"></span>`;
         li.children[1].textContent = p.name;
-        li.children[2].textContent = [p.id === msg.host && 'host', msg.mine.includes(p.id) && 'this device'].filter(Boolean).join(' · ');
+        li.children[2].textContent = [p.id === msg.host && 'host', msg.mine.includes(p.id) && 'this device',
+          !p.current && '⚠️ needs to refresh'].filter(Boolean).join(' · ');
         if (msg.mine.includes(p.id) && p.id !== msg.mine[0]) {
           const x = document.createElement('button');
           x.className = 'remove';
@@ -441,8 +447,9 @@
       });
       $('add-local').hidden = msg.players.length >= MAX_PLAYERS;
       $('btn-start').hidden = !session.isHost;
-      $('btn-start').disabled = msg.players.length < 2;
-      $('btn-start').textContent = msg.players.length < 2 ? 'Need 2+ players' : 'Start game';
+      const stale = msg.players.some(p => !p.current);
+      $('btn-start').disabled = msg.players.length < 2 || stale;
+      $('btn-start').textContent = stale ? 'Waiting for everyone to refresh' : msg.players.length < 2 ? 'Need 2+ players' : 'Start game';
       $('lobby-wait').hidden = session.isHost;
       show('lobby');
     }
