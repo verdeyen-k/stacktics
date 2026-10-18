@@ -61,8 +61,9 @@
     }
 
     const sounds = {
-      hit(v) { // wooden clack, louder for harder hits
-        const k = Math.min(1, v / 10), p = 0.85 + Math.random() * 0.3;
+      hit(v, size = 44) { // wooden clack: louder for harder hits, lower for bigger blocks
+        const k = Math.min(1, v / 10);
+        const p = Math.max(0.4, Math.min(2, Math.pow(44 / size, 0.8))) * (0.92 + Math.random() * 0.16);
         noise(1100 * p, 4, 0.07, 0.2 + 0.5 * k);
         tone(200 * p, 120 * p, 0.08, { vol: 0.1 + 0.3 * k });
       },
@@ -94,6 +95,34 @@
       win() { [523, 659, 784, 1047].forEach((f, i) => tone(f, f, i === 3 ? 0.6 : 0.18, { type: 'triangle', vol: 0.15, delay: i * 0.14 })); },
       stick() { noise(400, 2, 0.18, 0.35); tone(160, 90, 0.15, { vol: 0.12 }); },
       soak() { noise(2500, 1, 0.25, 0.15); },
+      pull(v) { // magnetic vwoom: buzzy, wobbling, rising hum, louder for a stronger pull
+        const k = Math.min(1, v / 3), t = ac.currentTime, dur = 0.4;
+        const lp = ac.createBiquadFilter(), g = ac.createGain(), lfo = ac.createOscillator(), depth = ac.createGain();
+        lp.type = 'lowpass';
+        lp.frequency.value = 700;
+        g.gain.setValueAtTime(0.0001, t);
+        g.gain.exponentialRampToValueAtTime(0.06 + 0.12 * k, t + 0.05);
+        g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+        lfo.frequency.value = 22;
+        depth.gain.value = 0.04;
+        lfo.connect(depth).connect(g.gain);
+        lp.connect(g).connect(master);
+        const oscs = [0, 7].map(detune => {
+          const o = ac.createOscillator();
+          o.type = 'sawtooth';
+          o.detune.value = detune * 10;
+          o.frequency.setValueAtTime(85, t);
+          o.frequency.exponentialRampToValueAtTime(150 + 60 * k, t + dur);
+          o.connect(lp);
+          return o;
+        });
+        for (const n of [...oscs, lfo]) { n.start(t); n.stop(t + dur + 0.02); }
+      },
+      slide(v) { // squeaky slide whistle, higher and louder the faster it slides
+        const k = Math.min(1, v / 6);
+        tone(550 + 350 * k, 800 + 700 * k, 0.18, { vol: 0.05 + 0.07 * k });
+        noise(3200, 0.8, 0.16, 0.05 + 0.06 * k);
+      },
       tick() { noise(2200, 6, 0.025, 0.2); },
       grab() { tone(300, 450, 0.06, { vol: 0.12 }); },
       clear() { noise(600, 0.7, 0.35, 0.3); },
@@ -330,7 +359,9 @@
         if (session.mode === 'local') { toast(`${p.name}'s turn`, COLORS[p.color]); sfx.play('turn'); }
         else if (e.player === session.me) { toast('Your turn!', COLORS[p.color]); buzz(30); sfx.play('turn'); }
       }
-      if (e.type === 'hit') sfx.play('hit', e.v);
+      if (e.type === 'hit') sfx.play('hit', e.v, e.s);
+      if (e.type === 'slide') sfx.play('slide', e.v);
+      if (e.type === 'pull') sfx.play('pull', e.v);
       if (e.type === 'drop') sfx.play('drop');
       if (e.type === 'stick') sfx.play('stick');
       if (e.type === 'soak') sfx.play('soak');

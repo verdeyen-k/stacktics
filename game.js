@@ -27,6 +27,11 @@
   const BOUNCE_MAX   = 10;     // cap on any bounce speed, px per tick
   const HIT_MIN      = 1.2;    // collisions softer than this make no 'hit' sound event
   const HIT_GAP      = 60;     // ms between 'hit' events, so a collapse doesn't flood clients
+  const SLIDE_MIN    = 0.8;    // slippery blocks sliding slower than this make no 'slide' sound event
+  const SLIDE_GAP    = 250;    // ms between 'slide' events
+  const PULL_MIN     = 0.3;    // magnet pulls weaker than this make no 'pull' sound event
+  const PULL_GAP     = 450;    // ms between 'pull' events
+  const PULL_WINDOW  = 120;    // ms to watch a pull build before sounding its peak
   const FLEX_STIFF   = 0.25;   // springiness of a flexible block's joints: lower bends and stretches more
 
   // A flexible block is a row of slices about 12 wide, joined by springs.
@@ -79,6 +84,12 @@
       this.flexLinks = [];
       this.stepHit = 0;          // hardest collision this tick, for sound
       this.lastHit = -Infinity;
+      this.stepHitSize = 0;      // size of the block that hit hardest, for the clack's pitch
+      this.stepSlide = 0;        // fastest slippery slide this tick
+      this.lastSlide = -Infinity;
+      this.stepPull = 0;         // strongest magnet pull actually moving something this tick
+      this.lastPull = -Infinity;
+      this.pullPeak = null;      // strongest pull seen in the current window, or null when not watching
       this.winner  = null;
 
       this.engine = Engine.create({ positionIterations: 12, velocityIterations: 10 });
@@ -87,6 +98,7 @@
       });
       Composite.add(this.engine.world, this.platform);
       Events.on(this.engine, 'collisionStart', e => this.onCollide(e.pairs));
+      Events.on(this.engine, 'collisionActive', e => this.onContact(e.pairs));
 
       this.startTurn(Math.floor(Math.random() * this.players.length));
     }
@@ -226,6 +238,7 @@
       const props = {
         group: this.nextId, color: this.active.color, glue: h.glue, magnet: h.magnet, sponge: h.sponge, slick: h.sponge,
         bouncy: h.bouncy, bounced: false, flex: h.flex, bonds: 0, fallen: false,
+        size: Math.sqrt(w * ht), // the whole block's size, even for a flexible block's slices
       };
       if (h.flex) this.addFlexible(h.x, y, w, ht, h.angle, physics, props);
       else {
@@ -297,10 +310,29 @@
       this.applyGlue();
       this.applyBounces();
       if (this.stepHit > HIT_MIN && this.time - this.lastHit > HIT_GAP) {
-        this.events.push({ type: 'hit', v: r1(this.stepHit) });
+        this.events.push({ type: 'hit', v: r1(this.stepHit), s: r1(this.stepHitSize) });
         this.lastHit = this.time;
       }
       this.stepHit = 0;
+      if (this.stepSlide > SLIDE_MIN && this.time - this.lastSlide > SLIDE_GAP) {
+        this.events.push({ type: 'slide', v: r1(this.stepSlide) });
+        this.lastSlide = this.time;
+      }
+      this.stepSlide = 0;
+      // A pull ramps up as a block closes in, so collect the peak over a short window before sounding it.
+      if (this.pullPeak == null && this.stepPull > PULL_MIN && this.time - this.lastPull > PULL_GAP) {
+        this.pullPeak = 0;
+        this.pullStart = this.time;
+      }
+      if (this.pullPeak != null) {
+        this.pullPeak = Math.max(this.pullPeak, this.stepPull);
+        if (this.time - this.pullStart >= PULL_WINDOW) {
+          this.events.push({ type: 'pull', v: r1(this.pullPeak) });
+          this.lastPull = this.time;
+          this.pullPeak = null;
+        }
+      }
+      this.stepPull = 0;
       this.checkFalls();
 
       if (!this.science && this.phase === 'aim' && this.time - this.phaseStart > AIM_TIME) this.drop(this.active.id);
@@ -327,9 +359,23 @@
           const dist = Vector.magnitude(d);
           if (dist < 1 || dist > MAGNET_RANGE) continue;
           const f = Vector.mult(d, MAGNET_PULL * o.mass * (1 - dist / MAGNET_RANGE) / dist);
+          // For sound: how fast o is closing in on the magnet, weighted by how strong the pull is there.
+          const closing = ((o.velocity.x - m.velocity.x) * d.x + (o.velocity.y - m.velocity.y) * d.y) / dist;
+          this.stepPull = Math.max(this.stepPull, closing * (1 - dist / MAGNET_RANGE));
           Body.applyForce(o, o.position, f);
           Body.applyForce(m, m.position, Vector.neg(f));
         }
+      }
+    }
+
+    // Ongoing contacts: track how fast slippery blocks are sliding, for sound.
+    onContact(pairs) {
+      for (const pair of pairs) {
+        const a = pair.bodyA.parent, b = pair.bodyB.parent;
+        if (!a.slick && !b.slick) continue;
+        const n = pair.collision.normal, rx = a.velocity.x - b.velocity.x, ry = a.velocity.y - b.velocity.y;
+        const along = rx * n.x + ry * n.y;
+        this.stepSlide = Math.max(this.stepSlide, Math.hypot(rx - along * n.x, ry - along * n.y));
       }
     }
 
@@ -337,7 +383,12 @@
       for (const pair of pairs) {
         const a = pair.bodyA.parent, b = pair.bodyB.parent;
         const n = pair.collision.normal;
-        this.stepHit = Math.max(this.stepHit, Math.abs((a.velocity.x - b.velocity.x) * n.x + (a.velocity.y - b.velocity.y) * n.y));
+        const hit = Math.abs((a.velocity.x - b.velocity.x) * n.x + (a.velocity.y - b.velocity.y) * n.y);
+        if (hit > this.stepHit) {
+          this.stepHit = hit;
+          const mover = Vector.magnitude(a.velocity) >= Vector.magnitude(b.velocity) ? a : b;
+          this.stepHitSize = mover.size || BASE_SIZE;
+        }
         // The sponge soaks whatever loose block it touches (but not the platform, and soaked blocks don't spread it).
         for (const [sp, o] of [[a, b], [b, a]]) {
           if (sp.sponge && !o.isStatic && !o.slick) { o.slick = true; o.friction = SLICK; this.events.push({ type: 'soak' }); }
