@@ -1,5 +1,5 @@
 (() => {
-  const { Game, SHOP, WORLD_W, PLATFORM, TICK } = TowerGame;
+  const { Game, SHOP, WORLD_W, PLATFORM, TICK, flexSegments } = TowerGame;
   const COLORS = ['#ff6b6b', '#4dabf7', '#ffd43b', '#69db7c'];
   const DARK   = ['#c94545', '#2f7fc4', '#d4a514', '#3fae55'];
   const $ = id => document.getElementById(id);
@@ -8,6 +8,103 @@
     set(k, v) { try { localStorage.setItem(k, v); } catch {} },
   };
   const buzz = ms => { try { navigator.vibrate && navigator.vibrate(ms); } catch {} };
+
+  // ── Sound effects, synthesized with Web Audio (no files) ────────
+  const sfx = (() => {
+    let ac = null, master = null, noiseBuf = null;
+    let muted = store.get('muted') === '1';
+    // Browsers only allow audio after a user gesture, so start it on the first touch or key.
+    const unlock = () => {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!ac && AC) {
+        ac = new AC();
+        master = ac.createGain();
+        master.gain.value = 0.5;
+        master.connect(ac.destination);
+      }
+      if (ac && ac.state === 'suspended') ac.resume();
+    };
+    window.addEventListener('pointerdown', unlock);
+    window.addEventListener('keydown', unlock);
+
+    // One note whose pitch glides from f0 to f1 over dur seconds.
+    function tone(f0, f1, dur, { type = 'sine', vol = 0.3, delay = 0 } = {}) {
+      const t = ac.currentTime + delay, o = ac.createOscillator(), g = ac.createGain();
+      o.type = type;
+      o.frequency.setValueAtTime(f0, t);
+      o.frequency.exponentialRampToValueAtTime(f1, t + dur);
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(vol, t + 0.01);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+      o.connect(g).connect(master);
+      o.start(t);
+      o.stop(t + dur + 0.02);
+    }
+
+    // A burst of band-passed noise: knocks, squelches, ticks.
+    function noise(freq, q, dur, vol, delay = 0) {
+      if (!noiseBuf) {
+        noiseBuf = ac.createBuffer(1, ac.sampleRate / 2, ac.sampleRate);
+        const d = noiseBuf.getChannelData(0);
+        for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+      }
+      const t = ac.currentTime + delay, src = ac.createBufferSource(), f = ac.createBiquadFilter(), g = ac.createGain();
+      src.buffer = noiseBuf;
+      f.type = 'bandpass';
+      f.frequency.value = freq;
+      f.Q.value = q;
+      g.gain.setValueAtTime(vol, t);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+      src.connect(f).connect(g).connect(master);
+      src.start(t);
+      src.stop(t + dur + 0.02);
+    }
+
+    const sounds = {
+      hit(v) { // wooden clack, louder for harder hits
+        const k = Math.min(1, v / 10), p = 0.85 + Math.random() * 0.3;
+        noise(1100 * p, 4, 0.07, 0.2 + 0.5 * k);
+        tone(200 * p, 120 * p, 0.08, { vol: 0.1 + 0.3 * k });
+      },
+      drop() { tone(520, 260, 0.12, { type: 'triangle', vol: 0.12 }); },
+      fall() { tone(700, 140, 0.55, { type: 'triangle', vol: 0.18 }); },
+      point() {
+        tone(988, 988, 0.12, { type: 'square', vol: 0.05, delay: 0.25 });
+        tone(1319, 1319, 0.3, { type: 'square', vol: 0.05, delay: 0.33 });
+      },
+      bounce() { // cartoon boing: pitch jumps up, then wobbles down
+        const t = ac.currentTime, o = ac.createOscillator(), lfo = ac.createOscillator(), depth = ac.createGain(), g = ac.createGain();
+        o.frequency.setValueAtTime(140, t);
+        o.frequency.exponentialRampToValueAtTime(420, t + 0.08);
+        o.frequency.exponentialRampToValueAtTime(220, t + 0.4);
+        lfo.frequency.value = 18;
+        depth.gain.value = 30;
+        lfo.connect(depth).connect(o.frequency);
+        g.gain.setValueAtTime(0.25, t);
+        g.gain.exponentialRampToValueAtTime(0.0001, t + 0.45);
+        o.connect(g).connect(master);
+        for (const n of [o, lfo]) { n.start(t); n.stop(t + 0.5); }
+      },
+      buy() { [1047, 1319, 1568].forEach((f, i) => tone(f, f, 0.12, { type: 'triangle', vol: 0.12, delay: i * 0.06 })); },
+      turn() { tone(660, 660, 0.15, { vol: 0.12 }); tone(880, 880, 0.25, { vol: 0.12, delay: 0.12 }); },
+      rushed() {
+        for (let i = 0; i < 3; i++) noise(3000, 8, 0.03, 0.4, i * 0.08);
+        tone(440, 880, 0.2, { type: 'sawtooth', vol: 0.05, delay: 0.24 });
+      },
+      win() { [523, 659, 784, 1047].forEach((f, i) => tone(f, f, i === 3 ? 0.6 : 0.18, { type: 'triangle', vol: 0.15, delay: i * 0.14 })); },
+      stick() { noise(400, 2, 0.18, 0.35); tone(160, 90, 0.15, { vol: 0.12 }); },
+      soak() { noise(2500, 1, 0.25, 0.15); },
+      tick() { noise(2200, 6, 0.025, 0.2); },
+      grab() { tone(300, 450, 0.06, { vol: 0.12 }); },
+      clear() { noise(600, 0.7, 0.35, 0.3); },
+    };
+
+    return {
+      play(name, ...args) { if (ac && !muted && ac.state === 'running') sounds[name](...args); },
+      get muted() { return muted; },
+      toggle() { muted = !muted; store.set('muted', muted ? '1' : '0'); unlock(); return muted; },
+    };
+  })();
 
   // ── Screens ──────────────────────────────────────────────────────
   const SCREENS = ['menu', 'local', 'lobby', 'rules', 'game'];
@@ -80,6 +177,9 @@
         if (a === 'buy') game.buy(pid, d.item);
         if (a === 'drop') game.drop(pid);
         if (a === 'clear') game.clear(pid);
+        if (a === 'grab') return game.grab(pid, d.x, d.y, d.slop);
+        if (a === 'move') game.move(pid, d.x, d.y);
+        if (a === 'release') game.release(pid);
       },
       update(dt) {
         acc = Math.min(acc + dt, 250);
@@ -227,11 +327,18 @@
         aimX = null;
         const p = playerOf(snap, e.player);
         if (!p) continue;
-        if (session.mode === 'local') toast(`${p.name}'s turn`, COLORS[p.color]);
-        else if (e.player === session.me) { toast('Your turn!', COLORS[p.color]); buzz(30); }
+        if (session.mode === 'local') { toast(`${p.name}'s turn`, COLORS[p.color]); sfx.play('turn'); }
+        else if (e.player === session.me) { toast('Your turn!', COLORS[p.color]); buzz(30); sfx.play('turn'); }
       }
+      if (e.type === 'hit') sfx.play('hit', e.v);
+      if (e.type === 'drop') sfx.play('drop');
+      if (e.type === 'stick') sfx.play('stick');
+      if (e.type === 'soak') sfx.play('soak');
+      if (e.type === 'bounce') { effects.push({ kind: 'ring', x: e.x, y: e.y, life: 1, color: '#f06595' }); sfx.play('bounce'); }
       if (e.type === 'fall') {
         buzz(25);
+        sfx.play('fall');
+        if (e.to.length) sfx.play('point');
         for (let i = 0; i < 16; i++) {
           const ang = -Math.PI / 2 + (Math.random() - 0.5) * 2.4, sp = 1.5 + Math.random() * 3;
           effects.push({ kind: 'spark', x: e.x, y: e.y, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp, life: 1, color: '#ffe08a' });
@@ -244,12 +351,14 @@
       if (e.type === 'buy') {
         const p = playerOf(snap, e.player), item = SHOP[e.item];
         if (p && !snap.science) toast(`${p.name}: ${item.icon} ${item.label}!`, COLORS[p.color]);
+        sfx.play(snap.science ? 'tick' : 'buy');
       }
       if (e.type === 'rushed') {
         const p = playerOf(snap, e.player);
         if (p) toast(`⏩ Rushed! ${p.name} goes now`, COLORS[p.color]);
+        sfx.play('rushed');
       }
-      if (e.type === 'win') buzz([40, 60, 40]);
+      if (e.type === 'win') { buzz([40, 60, 40]); sfx.play('win'); }
     }
   }
 
@@ -352,6 +461,32 @@
       for (const fx of [-0.3, 0.25]) { ctx.beginPath(); ctx.arc(fx * bw, h + s * 0.06, s * 0.05, 0, Math.PI * 2); ctx.fill(); }
     }
 
+    if (flags & 64) { // flexible (hovering, still straight): ribs where the slices will be
+      const n = flexSegments(bw);
+      ctx.strokeStyle = 'rgba(0,0,0,0.18)';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      for (let i = 1; i < n; i++) { const px = -hw + bw * i / n; ctx.moveTo(px, -h + 3); ctx.lineTo(px, h - 3); }
+      ctx.stroke();
+    }
+
+    if (flags & 32) { // bouncy: pink rubber rim with a spring across the top
+      ctx.strokeStyle = '#f06595';
+      ctx.lineWidth = Math.max(3, s * 0.1);
+      roundRect(-hw, -h, bw, bh, r);
+      ctx.stroke();
+      const zig = Math.max(3, Math.round(bw / (s * 0.18)));
+      ctx.strokeStyle = 'rgba(255, 240, 246, 0.95)';
+      ctx.lineWidth = Math.max(2, s * 0.06);
+      ctx.lineJoin = 'round';
+      ctx.beginPath();
+      for (let i = 0; i <= zig; i++) {
+        const px = -hw + s * 0.18 + (bw - s * 0.36) * (i / zig), py = -h + s * (i % 2 ? 0.2 : 0.36);
+        i ? ctx.lineTo(px, py) : ctx.moveTo(px, py);
+      }
+      ctx.stroke();
+    }
+
     if (flags & 1) { // glue: honey border with drips
       ctx.strokeStyle = 'rgba(255, 190, 40, 0.95)';
       ctx.lineWidth = Math.max(3, s * 0.08);
@@ -380,6 +515,52 @@
       ctx.moveTo(m, -m * 1.1); ctx.lineTo(m, -m * 0.65);
       ctx.stroke();
     }
+    ctx.restore();
+  }
+
+  // A flexible block's slices, drawn as one bendy strip through their corners.
+  function drawFlexible(segs) {
+    const corner = (b, sx, sy) => {
+      const c = Math.cos(b[3]), sn = Math.sin(b[3]), px = sx * b[4] / 2, py = sy * b[5] / 2;
+      return [b[1] + px * c - py * sn, b[2] + px * sn + py * c];
+    };
+    const top = [], bottom = [];
+    for (const b of segs) { top.push(corner(b, -1, -1), corner(b, 1, -1)); bottom.push(corner(b, -1, 1), corner(b, 1, 1)); }
+    const trace = pts => { ctx.beginPath(); pts.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); };
+    const mid = (p, q, t = 0.5) => [p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t];
+    const color = segs[0][6], flags = segs[0][7];
+
+    ctx.save();
+    ctx.globalAlpha = flags & 4 ? 0.6 : 1;
+    ctx.lineJoin = 'round';
+    trace([...top, ...[...bottom].reverse()]);
+    ctx.closePath();
+    ctx.shadowColor = 'rgba(0,0,0,0.35)';
+    ctx.shadowBlur = 8;
+    ctx.shadowOffsetY = 3;
+    ctx.fillStyle = COLORS[color];
+    ctx.fill();
+    ctx.shadowColor = 'transparent';
+    if (segs.some(b => b[7] & 16)) { ctx.fillStyle = 'rgba(160, 220, 255, 0.35)'; ctx.fill(); }
+    ctx.lineWidth = 2.5;
+    ctx.strokeStyle = DARK[color];
+    ctx.stroke();
+
+    ctx.strokeStyle = 'rgba(0,0,0,0.18)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    for (let i = 1; i < segs.length; i++) {
+      const t = mid(top[2 * i - 1], top[2 * i]), b = mid(bottom[2 * i - 1], bottom[2 * i]);
+      ctx.moveTo(...mid(t, b, 0.08));
+      ctx.lineTo(...mid(t, b, 0.92));
+    }
+    ctx.stroke();
+
+    ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+    ctx.lineWidth = 3;
+    ctx.lineCap = 'round';
+    trace(top.map((p, i) => mid(p, bottom[i], 0.14)).slice(1, -1));
+    ctx.stroke();
     ctx.restore();
   }
 
@@ -434,10 +615,30 @@
       ctx.fillText(`${(-top / 44).toFixed(1)} squares tall`, (w - ox) / s - 10 / s, top - 6 / s);
     }
 
-    for (const b of snap.blocks) drawBlock(b[1], b[2], b[3], b[4], b[5], b[6], b[7], b[7] & 4 ? 0.6 : 1);
+    const flexible = new Map();
+    for (const b of snap.blocks) {
+      if (b[7] & 64) {
+        if (!flexible.has(b[8])) flexible.set(b[8], []);
+        flexible.get(b[8]).push(b);
+      } else drawBlock(b[1], b[2], b[3], b[4], b[5], b[6], b[7], b[7] & 4 ? 0.6 : 1);
+    }
+    for (const segs of flexible.values()) drawFlexible(segs);
 
     ctx.fillStyle = 'rgba(255, 190, 40, 0.95)';
     for (const [gx, gy] of snap.glue) { ctx.beginPath(); ctx.arc(gx, gy, 3.5, 0, Math.PI * 2); ctx.fill(); }
+
+    if (snap.grab) { // science-mode tether from finger to the grabbed block
+      const [fx, fy, bx, by] = snap.grab;
+      ctx.setLineDash([5, 5]);
+      ctx.strokeStyle = 'rgba(255,255,255,0.8)';
+      ctx.lineWidth = 2 / s;
+      ctx.beginPath(); ctx.moveTo(fx, fy); ctx.lineTo(bx, by); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = '#fff';
+      ctx.beginPath(); ctx.arc(bx, by, 4 / s, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,0.8)';
+      ctx.beginPath(); ctx.arc(fx, fy, 12 / s, 0, Math.PI * 2); ctx.stroke();
+    }
 
     const hv = snap.hover;
     if (hv) {
@@ -448,7 +649,7 @@
       ctx.beginPath(); ctx.moveTo(x, hv.y + hv.h / 2 + 6); ctx.lineTo(x, 0); ctx.stroke();
       ctx.setLineDash([]);
       const bob = Math.sin(now / 300) * 3;
-      drawBlock(x, hv.y + bob, hv.angle, hv.w, hv.h, hv.c, (hv.glue ? 1 : 0) | (hv.magnet ? 2 : 0) | (hv.sponge ? 8 : 0), 0.92);
+      drawBlock(x, hv.y + bob, hv.angle, hv.w, hv.h, hv.c, (hv.glue ? 1 : 0) | (hv.magnet ? 2 : 0) | (hv.sponge ? 8 : 0) | (hv.bouncy ? 32 : 0) | (hv.flex ? 64 : 0), 0.92);
       if (hv.rush) {
         ctx.font = `700 ${16 / s}px Fredoka, system-ui, sans-serif`;
         ctx.textAlign = 'center';
@@ -468,6 +669,10 @@
       if (e.kind === 'spark') {
         e.x += e.vx; e.y += e.vy; e.vy += 0.15;
         ctx.fillRect(e.x - 2, e.y - 2, 4, 4);
+      } else if (e.kind === 'ring') {
+        ctx.strokeStyle = e.color;
+        ctx.lineWidth = 3;
+        ctx.beginPath(); ctx.arc(e.x, e.y, 18 + (1 - e.life) * 40, 0, Math.PI * 2); ctx.stroke();
       } else {
         e.y -= dt * 0.03;
         ctx.font = `700 ${18 / s}px Fredoka, system-ui, sans-serif`;
@@ -516,7 +721,7 @@
     let banner = '', timer = '';
     if (snap.phase === 'aim' && active) {
       banner = session.mode === 'local' ? `${active.name}'s turn` : mine ? 'Your turn — drag to aim' : `${active.name} is aiming…`;
-      if (snap.science) banner = '🔬 Science mode: everything is free';
+      if (snap.science) banner = '🔬 Science mode · drag blocks to move them';
       if (snap.timeLeft != null && snap.timeLeft < 10000) timer = `${Math.ceil(snap.timeLeft / 1000)}s`;
     } else if (snap.phase === 'settle') banner = 'Wobble…';
     if ($('banner-text').textContent !== banner) $('banner-text').textContent = banner;
@@ -561,21 +766,36 @@
     session.act('aim', { x: aimX });
   }
 
+  // Screen position → world position, matching the transform in draw().
+  const toWorld = e => ({
+    x: PLATFORM.x + (e.clientX - view.w / 2) / cam.scale,
+    y: VIEW_BOTTOM - (view.bottom - e.clientY) / cam.scale,
+  });
+
   canvas.addEventListener('pointerdown', e => {
     if (!myTurn(current)) return;
-    drag = { id: e.pointerId, x: e.clientX };
+    // In science mode, touching a block grabs it; touching empty space aims the next block.
+    const grabbing = current.science && session.act('grab', { ...toWorld(e), slop: 14 / cam.scale });
+    if (grabbing) sfx.play('grab');
+    drag = { id: e.pointerId, x: e.clientX, block: !!grabbing };
     canvas.setPointerCapture(e.pointerId);
   });
   canvas.addEventListener('pointermove', e => {
     if (!drag || drag.id !== e.pointerId) return;
+    if (drag.block) { session.act('move', toWorld(e)); return; }
     setAim((aimX ?? current.hover.x) + (e.clientX - drag.x) / cam.scale);
     drag.x = e.clientX;
   });
-  const endDrag = e => { if (drag && drag.id === e.pointerId) { drag = null; if (aimX != null) session.act('aim', { x: aimX }); } };
+  const endDrag = e => {
+    if (!drag || drag.id !== e.pointerId) return;
+    if (drag.block) session.act('release');
+    else if (aimX != null) session.act('aim', { x: aimX });
+    drag = null;
+  };
   canvas.addEventListener('pointerup', endDrag);
   canvas.addEventListener('pointercancel', endDrag);
 
-  const rotate = dir => { if (myTurn(current)) session.act('rotate', { dir }); };
+  const rotate = dir => { if (myTurn(current)) { session.act('rotate', { dir }); sfx.play('tick'); } };
   const drop = () => {
     if (!myTurn(current)) return;
     if (aimX != null) session.act('aim', { x: aimX, force: true });
@@ -597,7 +817,10 @@
   });
 
   $('btn-quit').onclick = () => { $('quit-confirm').hidden = false; };
-  $('btn-clear').onclick = () => session && session.act('clear');
+  $('btn-clear').onclick = () => { if (session) { session.act('clear'); sfx.play('clear'); } };
+  const soundBtn = $('btn-sound');
+  soundBtn.textContent = sfx.muted ? '🔇' : '🔊';
+  soundBtn.onclick = () => { soundBtn.textContent = sfx.toggle() ? '🔇' : '🔊'; };
   $('btn-quit-no').onclick = () => { $('quit-confirm').hidden = true; };
   $('btn-quit-yes').onclick = () => session && session.quit();
   $('btn-over-menu').onclick = () => session && session.quit();

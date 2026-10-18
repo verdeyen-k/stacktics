@@ -75,11 +75,12 @@
   .menu-btn { position: absolute; top: calc(10px + var(--safe-t)); left: 10px; width: 38px; height: 38px; border-radius: 12px; border: 0;
     background: rgba(0,0,0,.28); font-size: 18px; pointer-events: auto; cursor: pointer; }
 
-  .menu-btn.clear-btn { left: auto; right: 10px; }
+  .menu-btn.sound-btn { left: auto; right: 10px; }
+  .menu-btn.clear-btn { left: auto; right: 56px; }
   .shop.science .cost { color: var(--green); }
   .controls { position: absolute; left: 0; right: 0; bottom: 0; padding: 8px 12px calc(12px + var(--safe-b));
     display: flex; flex-direction: column; gap: 8px; background: linear-gradient(transparent, rgba(10,6,30,.55) 30%); }
-  .shop { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+  .shop { display: grid; grid-template-columns: repeat(5, 1fr); gap: 5px; }
   .shop button { border-radius: 14px; border: 2px solid var(--line); background: rgba(255,255,255,.1); padding: 6px 2px; cursor: pointer;
     display: flex; flex-direction: column; align-items: center; line-height: 1.1; font-size: 13px; transition: transform .08s; }
   .shop button .ic { font-size: 22px; }
@@ -172,6 +173,8 @@
       <li>Spend ★ on power-ups for your block:
         🤏 <b>Tiny</b>, 🐘 <b>Huge</b>, ↔️ <b>Long</b> (doubles the length, buy it again to keep stretching),
         🍯 <b>Glue</b> (sticks to whatever it touches), 🧽 <b>Slippery</b> (a soapy sponge that makes what it touches slide),
+        🏀 <b>Bouncy</b> (hops once when it lands, then flings off anything that lands on it),
+        🪱 <b>Flexible</b> (a rubbery block that bends and stretches),
         🧲 <b>Magnet</b> (pulls nearby blocks in), ⏩ <b>Rush</b> (the next player's turn starts before the tower settles — anything that falls is on them).</li>
       <li>First to <b>★10</b> wins. Spending is a gamble!</li>
       <li>Want to see how the pieces behave? <b>🔬 Science mode</b> has no timers or scores, every power-up is free,
@@ -190,6 +193,7 @@
   </div>
   <button class="menu-btn" id="btn-quit" aria-label="Quit">✕</button>
   <button class="menu-btn clear-btn" id="btn-clear" aria-label="Clear the platform" hidden>🧹</button>
+  <button class="menu-btn sound-btn" id="btn-sound" aria-label="Sound on or off">🔊</button>
   <div class="controls" id="controls">
     <div class="shop" id="shop"></div>
     <div class="actions">

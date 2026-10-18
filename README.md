@@ -10,6 +10,8 @@ Every block that falls off the platform gives ★1 to everyone whose turn it *is
 | ↔️ Long | ★1 | Doubles the block's length; buy it again to keep stretching (up to 360 wide) |
 | 🍯 Glue | ★2 | Sticks to whatever it touches (bonds can snap) |
 | 🧽 Slippery | ★2 | A soapy sponge: slides on everything and soaks the blocks it touches so they slide too |
+| 🏀 Bouncy | ★2 | Hops once when it lands, then acts as a trampoline: anything that lands on it bounces off. Can't be combined with Glue |
+| 🪱 Flexible | ★2 | A rubbery block made of slices joined by springs, so it bends and stretches. Works with Tiny, Huge and Long; not with Glue, Slippery, Bouncy or Magnet |
 | 🧲 Magnet | ★3 | Keeps pulling nearby blocks toward it |
 | ⏩ Rush | ★4 | The next player's turn starts 0.6s after your drop, whether the tower has settled or not |
 
