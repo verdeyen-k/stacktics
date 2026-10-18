@@ -130,21 +130,34 @@
       Composite.add(this.engine.world, this.plank);
     }
 
-    // Add up how hard everything touching the plank pushed on it this tick, and turn it to match.
+    // Before the physics step: how each block would move if nothing touched it (its own momentum, air drag,
+    // gravity and our forces). Whatever differs after the step was a push from something it touched.
+    predictFree() {
+      const gr = this.engine.gravity, dt2 = TICK * TICK, free = new Map();
+      for (const b of this.blocks) {
+        const drag = 1 - b.frictionAir;
+        free.set(b, {
+          x: (b.position.x - b.positionPrev.x) * drag + (b.force.x / b.mass + gr.x * gr.scale) * dt2,
+          y: (b.position.y - b.positionPrev.y) * drag + (b.force.y / b.mass + gr.y * gr.scale) * dt2,
+          w: (b.angle - b.anglePrev) * drag + (b.torque / b.inertia) * dt2,
+        });
+      }
+      this.free = free;
+    }
+
+    // Turn the plank by however hard the blocks were pushed this tick, measured as a twist about the pivot.
+    // Blocks pushing on each other (and glue or springs between them) cancel out in the total, so what's left
+    // is everything the plank did to them, including glue to the plank, which contact forces alone would miss.
     // A spring pulls it back toward level, so one block off-center tilts it a little rather than all the way.
     applySeesaw() {
       const p = this.plank;
       let torque = 0;
-      for (const pair of this.engine.pairs.list) {
-        if (!pair.isActive) continue;
-        const { parentA, parentB, normal: n, tangent: t } = pair.collision;
-        if (parentA !== p && parentB !== p) continue;
-        const sign = parentA === p ? -1 : 1; // the solver pushes body A by -impulse and body B by +impulse
-        for (let i = 0; i < pair.contactCount; i++) {
-          const c = pair.contacts[i];
-          const jx = n.x * c.normalImpulse + t.x * c.tangentImpulse, jy = n.y * c.normalImpulse + t.y * c.tangentImpulse;
-          torque += sign * ((c.vertex.x - p.position.x) * jy - (c.vertex.y - p.position.y) * jx);
-        }
+      for (const [b, f] of this.free) {
+        if (!b.parent || this.grabbed && this.grabbed.bodyB === b) continue; // gone, or held by a finger
+        const jx = b.mass * (b.position.x - b.positionPrev.x - f.x);
+        const jy = b.mass * (b.position.y - b.positionPrev.y - f.y);
+        torque -= (b.position.x - p.position.x) * jy - (b.position.y - p.position.y) * jx;
+        torque -= b.inertia * (b.angle - b.anglePrev - f.w);
       }
       torque -= SEESAW_SPRING * p.angle;
       this.plankSpin = (this.plankSpin + torque / this.plankI) * (1 - SEESAW_DAMP);
@@ -155,7 +168,13 @@
         if (thud > this.stepHit) { this.stepHit = thud; this.stepHitSize = 120; }
         this.plankSpin = 0;
       }
+      const turn = angle - p.angle;
       Body.setAngle(p, angle, true); // true: the solver sees the plank moving, so it carries what's on it
+      // Matter leaves joint anchors on static bodies where they are, so turn glue anchored to the plank with it.
+      for (const c of this.glues) {
+        if (c.bodyA === p) c.pointA = Vector.rotate(c.pointA, turn);
+        if (c.bodyB === p) c.pointB = Vector.rotate(c.pointB, turn);
+      }
     }
 
     // Matter lets resting blocks creep down any slope: gravity moves them straight down, then the collision
@@ -239,7 +258,7 @@
     }
 
     buy(pid, item) {
-      if (!this.canAct(pid) || !SHOP[item]) return;
+      if (!this.canAct(pid) || !Object.prototype.hasOwnProperty.call(SHOP, item)) return;
       if (this.science) { this.toggle(item); this.aim(pid, this.hover.x); return; }
       const p = this.active, h = this.hover, it = SHOP[item];
       if (p.points < it.cost || !it.ok(h)) return;
@@ -382,7 +401,7 @@
     // ── Simulation ─────────────────────────────────────────────────
     step() {
       this.applyMagnets();
-      if (this.plank) this.holdOnSlopes();
+      if (this.plank) { this.holdOnSlopes(); this.predictFree(); }
       Engine.update(this.engine, TICK);
       if (this.plank) this.applySeesaw();
       this.time += TICK;

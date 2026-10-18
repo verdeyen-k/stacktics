@@ -5,7 +5,6 @@
     "start": "node server.js"
   },
   "dependencies": {
-    "matter-js": "^0.20.0",
-    "ws": "^8.18.0"
+    "matter-js": "^0.20.0"
   }
 }

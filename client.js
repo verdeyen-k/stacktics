@@ -159,9 +159,8 @@
   };
   showPlatform();
 
-  // ── Session: either a local Game or a server connection ─────────
+  // ── Session: either a local Game or an online room ─────────
   let session = null;
-  let ws = null;
 
   function resetView() {
     effects.length = 0;
@@ -247,42 +246,152 @@
     shopEl.classList.toggle('science', on);
   }
 
-  // Online
-  function connect(first) {
-    if (!location.host) { $('menu-error').textContent = 'Online play needs the server (npm start).'; return; }
-    if (ws) ws.close();
-    ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host);
-    const sock = ws;
-    sock.onopen = () => sock.send(JSON.stringify(first));
-    sock.onerror = () => { $('menu-error').textContent = 'Could not reach the server.'; };
-    sock.onclose = () => {
-      if (ws !== sock) return;
-      ws = null;
-      if (session && session.mode === 'net') { session = null; show('menu'); $('menu-error').textContent = 'Disconnected.'; }
-    };
-    sock.onmessage = e => onServer(JSON.parse(e.data));
-  }
-  const sendNet = msg => { if (ws && ws.readyState === 1) ws.send(JSON.stringify(msg)); };
+  // ── Online ──────────────────────────────────────────────────────
+  // Rooms live in Firebase. The host's browser runs the game, the way a server would, and writes
+  // the tower out ~15 times a second; everyone else sends their moves to the host.
+  const db = window.firebase ? (firebase.initializeApp({
+    apiKey:            'AIzaSyAsJboNGVuESMhkivllUD0o8MUB5LUCMRQ',
+    authDomain:        'kvgames.firebaseapp.com',
+    databaseURL:       'https://kvgames-default-rtdb.firebaseio.com',
+    projectId:         'kvgames',
+    storageBucket:     'kvgames.firebasestorage.app',
+    messagingSenderId: '463308384695',
+    appId:             '1:463308384695:web:5d57623ebd52101ad26032',
+  }), firebase.database()) : null;
+  const ROOMS = 'stacktics/rooms';
+  const MAX_PLAYERS = 4;
+  const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  const STAMP = () => firebase.database.ServerValue.TIMESTAMP;
+  let room = null; // the room we're in: { code, ref, me, isHost, seesaw, players, game, ... }
 
-  $('btn-create').onclick = () => { $('menu-error').textContent = ''; connect({ t: 'create', name: myName(), seesaw }); };
+  async function openRoom(code) {
+    if (!db) { $('menu-error').textContent = 'Online play needs an internet connection.'; return; }
+    leaveRoom();
+    $('menu-error').textContent = '';
+    const create = !code;
+    const name = myName();
+    try {
+      let ref, info;
+      if (create) {
+        do {
+          code = Array.from({ length: 4 }, () => CODE_CHARS[Math.floor(Math.random() * CODE_CHARS.length)]).join('');
+          ref = db.ref(`${ROOMS}/${code}`);
+        } while ((await ref.once('value')).exists());
+        info = { host: null, seesaw, game: 0 };
+      } else {
+        ref = db.ref(`${ROOMS}/${code}`);
+        info = (await ref.once('value')).val();
+        const err = !info || !info.host ? 'Room not found' : info.game ? 'Game already started'
+          : Object.keys(info.players || {}).length >= MAX_PLAYERS ? 'Room is full' : null;
+        if (err) { $('menu-error').textContent = err; return; }
+      }
+      const me = ref.child('players').push().key;
+      if (create) {
+        ref.onDisconnect().remove(); // the room goes when its host does
+        await ref.set({ host: me, seesaw, game: 0, created: STAMP() });
+        info.host = me;
+      }
+      const pref = ref.child('players/' + me);
+      pref.onDisconnect().remove();
+      await pref.set({ name, at: STAMP() });
+      room = { code, ref, me, isHost: create, host: info.host, seesaw: !!info.seesaw, players: [], gameNo: 0, subs: [] };
+      watchRoom(room);
+    } catch (e) {
+      $('menu-error').textContent = 'Could not reach the game server.';
+    }
+  }
+
+  function on(r, ref, event, fn) { ref.on(event, fn); r.subs.push(() => ref.off(event, fn)); }
+
+  function watchRoom(r) {
+    const lobby = () => onServer({ t: 'lobby', code: r.code, you: r.me, host: r.host, players: r.players, game: r.gameNo, seesaw: r.seesaw });
+    on(r, r.ref.child('host'), 'value', snap => {
+      if (snap.val()) return;
+      const wasPlaying = session && session.mode === 'net';
+      leaveRoom();
+      if (wasPlaying || !$('lobby').hidden) { session = null; show('menu'); $('menu-error').textContent = 'The host left the game.'; }
+    });
+    on(r, r.ref.child('players'), 'value', snap => {
+      const v = snap.val() || {};
+      r.players = Object.keys(v).map(id => ({ id, name: v[id].name, at: v[id].at || 0 })).sort((a, b) => a.at - b.at);
+      if (r.isHost && r.game) {
+        for (const p of [...r.game.players]) if (!v[p.id]) r.game.removePlayer(p.id);
+      }
+      lobby();
+    });
+    on(r, r.ref.child('game'), 'value', snap => { r.gameNo = snap.val() || 0; lobby(); });
+    if (r.isHost) {
+      // Moves from the other players: apply them, then clear them out.
+      on(r, r.ref.child('acts'), 'child_added', snap => {
+        const m = snap.val() || {};
+        snap.ref.remove();
+        hostAct(r, m.p, m.a, m);
+      });
+    } else {
+      on(r, r.ref.child('state'), 'value', snap => {
+        if (snap.val()) onServer({ t: 'state', ...JSON.parse(snap.val()) });
+      });
+    }
+  }
+
+  function hostAct(r, pid, a, d) {
+    const g = r.game;
+    if (!g || !r.players.some(p => p.id === pid)) return;
+    if (a === 'aim')    g.aim(pid, d.x);
+    if (a === 'rotate') g.rotate(pid, d.dir);
+    if (a === 'buy')    g.buy(pid, d.item);
+    if (a === 'drop')   g.drop(pid);
+  }
+
+  // Host only: a new game with everyone in the room, stepped on a timer like the old server did.
+  function hostStart(r) {
+    if (r.players.length < 2) return;
+    r.game = new Game(r.players.map(p => ({ id: p.id, name: p.name })), { seesaw: r.seesaw });
+    clearInterval(r.loop);
+    let last = performance.now(), acc = 0, ticks = 0;
+    r.loop = setInterval(() => {
+      const now = performance.now();
+      acc = Math.min(acc + now - last, 250); // don't spiral after a stall
+      last = now;
+      while (acc >= TICK) { r.game.step(); acc -= TICK; ticks++; }
+      if (ticks >= 4) {
+        ticks = 0;
+        const s = r.game.snapshot(), ev = r.game.drainEvents();
+        handleEvents(ev, s);
+        // Sent as a string: Firebase would quietly drop the empty arrays and nulls in a snapshot.
+        r.ref.child('state').set(JSON.stringify({ s, ev, time: r.game.time }));
+      }
+    }, TICK);
+    r.ref.child('game').set(r.gameNo + 1);
+  }
+
+  function leaveRoom() {
+    const r = room;
+    if (!r) return;
+    room = null;
+    clearInterval(r.loop);
+    for (const off of r.subs) off();
+    if (r.isHost) { r.ref.remove(); r.ref.onDisconnect().cancel(); }
+    else { r.ref.child('players/' + r.me).remove(); r.ref.child('players/' + r.me).onDisconnect().cancel(); }
+  }
+  window.addEventListener('pagehide', leaveRoom);
+
+  $('btn-create').onclick = () => openRoom(null);
   $('btn-join').onclick = () => {
     const code = $('join-code').value.trim().toUpperCase();
     if (code.length !== 4) { $('menu-error').textContent = 'Enter the 4-letter room code.'; return; }
-    $('menu-error').textContent = '';
-    connect({ t: 'join', code, name: myName() });
+    openRoom(code);
   };
   $('join-code').addEventListener('keydown', e => { if (e.key === 'Enter') $('btn-join').click(); });
-  $('btn-leave').onclick = () => { const s = ws; ws = null; session = null; if (s) s.close(); show('menu'); };
-  $('btn-start').onclick = () => sendNet({ t: 'start' });
+  $('btn-leave').onclick = () => { leaveRoom(); session = null; show('menu'); };
+  $('btn-start').onclick = () => room && room.isHost && hostStart(room);
 
   function onServer(msg) {
-    if (msg.t === 'error') { $('menu-error').textContent = msg.msg; if (ws) ws.close(); return; }
-
     if (msg.t === 'lobby') {
-      if (!session || session.mode !== 'net') session = makeNetSession();
+      if (!session || session.mode !== 'net') session = room.isHost ? makeHostSession(room) : makeNetSession();
       Object.assign(session, { me: msg.you, isHost: msg.host === msg.you, code: msg.code });
       if (msg.game) {
-        if (session.gameNo !== msg.game) { session.gameNo = msg.game; session.buf = []; resetView(); setScienceUI(false); show('game'); }
+        if (session.gameNo !== msg.game) { session.gameNo = msg.game; session.buf = []; session.off = null; resetView(); setScienceUI(false); show('game'); }
         return;
       }
       $('lobby-code').textContent = msg.code;
@@ -303,11 +412,27 @@
       show('lobby');
     }
 
-    if (msg.t === 'state' && session && session.mode === 'net') {
-      session.buf.push({ t: performance.now(), s: msg.s });
+    if (msg.t === 'state' && session && session.mode === 'net' && !session.isHost) {
+      // Place each snapshot on our clock using the host's game time, so uneven delivery doesn't make it stutter.
+      const now = performance.now(), est = now - msg.time;
+      if (session.off == null || est < session.off || msg.time < session.lastT) session.off = est;
+      else session.off += (est - session.off) * 0.02;
+      session.lastT = msg.time;
+      session.buf.push({ t: msg.time + session.off, s: msg.s });
       if (session.buf.length > 12) session.buf.shift();
       handleEvents(msg.ev, msg.s);
     }
+  }
+
+  // The host plays on the game it's running, so it needs no interpolation.
+  function makeHostSession(r) {
+    return {
+      mode: 'net', buf: [], gameNo: 0,
+      act(a, d = {}) { hostAct(r, r.me, a, d); },
+      update() { return r.game ? r.game.snapshot() : null; },
+      rematch() { hostStart(r); },
+      quit() { leaveRoom(); session = null; show('menu'); },
+    };
   }
 
   function makeNetSession() {
@@ -315,19 +440,21 @@
     return {
       mode: 'net', buf: [], gameNo: 0,
       act(a, d = {}) {
+        if (!['aim', 'rotate', 'buy', 'drop'].includes(a) || !room) return;
         if (a === 'aim' && !d.force) {
           const now = performance.now();
-          if (now - lastAimSent < 33) return;
+          if (now - lastAimSent < 66) return;
           lastAimSent = now;
         }
-        sendNet({ t: 'act', a, ...d });
+        const { force, ...rest } = d;
+        room.ref.child('acts').push({ p: room.me, a, ...rest });
       },
-      // Render ~100ms in the past and interpolate between server snapshots.
+      // Render a little in the past and interpolate between the host's snapshots.
       update() {
         const buf = this.buf;
         if (!buf.length) return null;
         const latest = buf[buf.length - 1].s;
-        const rt = performance.now() - 100;
+        const rt = performance.now() - 150;
         let i = buf.length - 2;
         while (i >= 0 && buf[i].t > rt) i--;
         if (i < 0 || i >= buf.length - 1) return latest;
@@ -346,8 +473,8 @@
         const seesaw = sa && sb ? [sb[0], sb[1], sa[2] + (sb[2] - sa[2]) * k] : latest.seesaw;
         return { ...latest, blocks, seesaw };
       },
-      rematch() { sendNet({ t: 'rematch' }); },
-      quit() { const s = ws; ws = null; session = null; if (s) s.close(); show('menu'); },
+      rematch() {},
+      quit() { leaveRoom(); session = null; show('menu'); },
     };
   }
 

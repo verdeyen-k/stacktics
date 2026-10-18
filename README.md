@@ -17,7 +17,9 @@ Every block that falls off the platform gives ★1 to everyone whose turn it *is
 
 First to ★10 wins.
 
-## Run
+**Play it at https://verdeyen-k.github.io/stacktics/**
+
+## Run locally
 
 ```
 npm install
@@ -26,7 +28,7 @@ npm start          # http://localhost:3002
 
 - **Play on this device**: pass-and-play for 2–4 players; the physics runs in the browser.
 - **🔬 Science mode**: a solo sandbox for learning how the pieces behave. There are no timers or scores, power-ups are free toggles that stay on between drops, and 🧹 clears the platform.
-- **Online**: create a room, and friends join with the 4-letter code (up to 4 players). The server runs the physics so everyone sees the same tower.
+- **Online**: create a room, and friends join with the 4-letter code (up to 4 players). The host's browser runs the physics and sends the tower to everyone through Firebase (`stacktics/rooms/<CODE>` in the `kvgames` Realtime Database), so everyone sees the same tower. The host needs to keep the game open on screen; if the host leaves, the room closes.
 
 Pick **▬ Platform** or **⚖️ Seesaw** on the menu before starting any of these. On the seesaw the plank tips toward the heavier side, up to 15° each way, so keep the tower balanced. Online, the host's pick applies to the whole room.
 
@@ -35,7 +37,7 @@ To play from a phone on your Wi-Fi, open `http://<your-PC-IP>:3002`. Under WSL2 
 
 ## Files
 
-- `game.js`: rules and Matter.js physics. Shared by the server and the browser.
-- `server.js`: static file server and WebSocket rooms. Runs one authoritative `Game` per room and broadcasts snapshots at ~30 Hz.
-- `client.js`: canvas rendering, camera, touch controls, and the local/online sessions.
+- `game.js`: rules and Matter.js physics. Also loads in Node for headless tests.
+- `server.js`: static file server for local testing. The published site is plain GitHub Pages.
+- `client.js`: canvas rendering, camera, touch controls, and the local/online sessions. Online, the host runs one `Game` and writes snapshots to Firebase at ~15 Hz; other players push their moves for the host to apply.
 - `index.html`: screens and styles.
