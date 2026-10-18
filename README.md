@@ -28,6 +28,8 @@ npm start          # http://localhost:3002
 - **🔬 Science mode**: a solo sandbox for learning how the pieces behave. There are no timers or scores, power-ups are free toggles that stay on between drops, and 🧹 clears the platform.
 - **Online**: create a room, and friends join with the 4-letter code (up to 4 players). The server runs the physics so everyone sees the same tower.
 
+Pick **▬ Platform** or **⚖️ Seesaw** on the menu before starting any of these. On the seesaw the plank tips toward the heavier side, up to 15° each way, so keep the tower balanced. Online, the host's pick applies to the whole room.
+
 To play from a phone on your Wi-Fi, open `http://<your-PC-IP>:3002`. Under WSL2 you need mirrored networking
 (`networkingMode=mirrored` in `%UserProfile%\.wslconfig`) or a `netsh interface portproxy` rule, plus a firewall allowance for port 3002.
 

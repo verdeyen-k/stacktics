@@ -124,6 +124,9 @@
   <h1>Stacktics<small>STACKING · WITH · TACTICS</small></h1>
   <div class="panel">
     <input class="field" id="name" placeholder="Your name" maxlength="12" autocomplete="off">
+    <div class="counts" id="platform-pick" aria-label="Platform">
+      <button class="btn" data-p="flat">▬ Platform</button><button class="btn" data-p="seesaw">⚖️ Seesaw</button>
+    </div>
     <button class="btn primary" id="btn-local">Play on this device</button>
     <button class="btn" id="btn-science">🔬 Science mode</button>
     <button class="btn" id="btn-create">Create online room</button>
@@ -156,6 +159,7 @@
   <div class="roomcode" id="lobby-code">----</div>
   <p class="hint">Friends open this page and enter the code</p>
   <div class="panel">
+    <p class="hint" id="lobby-seesaw" hidden>⚖️ Seesaw mode</p>
     <ul class="plist" id="lobby-players"></ul>
     <button class="btn primary" id="btn-start">Start game</button>
     <p class="hint" id="lobby-wait">Waiting for the host to start…</p>
@@ -177,6 +181,8 @@
         🪱 <b>Flexible</b> (a rubbery block that bends and stretches),
         🧲 <b>Magnet</b> (pulls nearby blocks in), ⏩ <b>Rush</b> (the next player's turn starts before the tower settles — anything that falls is on them).</li>
       <li>First to <b>★10</b> wins. Spending is a gamble!</li>
+      <li>Pick <b>⚖️ Seesaw</b> on the menu to build on a seesaw instead: it tips toward whichever side is heavier,
+        so keep the tower balanced.</li>
       <li>Want to see how the pieces behave? <b>🔬 Science mode</b> has no timers or scores, every power-up is free,
         and 🧹 clears the platform.</li>
     </ul>

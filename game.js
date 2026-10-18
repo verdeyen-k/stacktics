@@ -9,8 +9,11 @@
   // World units are pixels at scale 1. y grows downward; the platform top sits at y = 0.
   const WORLD_W   = 400;
   const PLATFORM  = { x: 200, y: 20, w: 220, h: 40 };
+  // Seesaw mode: a plank pivoting on its middle, with top at y = 0 when level. It tilts at most `tilt` either way.
+  const SEESAW    = { x: 200, y: 7, w: 260, h: 14, tilt: 15 * Math.PI / 180 };
   const BASE_SIZE = 44;
   const FALL_Y    = 30;     // a block whose center drops below this is off the platform
+  const SEESAW_FALL_Y = 60; // ...lower on a seesaw, whose ends dip
   const KILL_Y    = 900;    // remove fallen blocks once they're well out of sight
   const DROP_GAP  = 120;    // how far above the tower the next square hovers
   const TICK      = 1000 / 60;
@@ -33,6 +36,9 @@
   const PULL_GAP     = 450;    // ms between 'pull' events
   const PULL_WINDOW  = 120;    // ms to watch a pull build before sounding its peak
   const FLEX_STIFF   = 0.25;   // springiness of a flexible block's joints: lower bends and stretches more
+  const SEESAW_SPRING  = 700;  // how hard the seesaw pushes back toward level, per radian of tilt
+  const SEESAW_DAMP    = 0.05; // fraction of the seesaw's spin lost each tick
+  const SEESAW_DENSITY = 0.002;
 
   // A flexible block is a row of slices about 12 wide, joined by springs.
   const flexSegments = w => Math.max(3, Math.min(16, Math.round(w / 12)));
@@ -73,6 +79,8 @@
     constructor(players, opts = {}) {
       this.target  = opts.target || TARGET;
       this.science = !!opts.science; // sandbox: no timers, no scoring, power-ups are free toggles
+      this.seesaw  = !!opts.seesaw;  // the platform is a tilting plank
+      this.fallY   = this.seesaw ? SEESAW_FALL_Y : FALL_Y;
       this.players = players.map((p, i) => ({ id: p.id, name: p.name, color: i, points: 0 }));
       this.events  = [];
       this.time    = 0;
@@ -92,11 +100,14 @@
       this.pullPeak = null;      // strongest pull seen in the current window, or null when not watching
       this.winner  = null;
 
-      this.engine = Engine.create({ positionIterations: 12, velocityIterations: 10 });
-      this.platform = Bodies.rectangle(PLATFORM.x, PLATFORM.y, PLATFORM.w, PLATFORM.h, {
-        isStatic: true, friction: 0.9, frictionStatic: 1, chamfer: { radius: 6 },
-      });
-      Composite.add(this.engine.world, this.platform);
+      this.engine = Engine.create({ positionIterations: 12, velocityIterations: 10, constraintIterations: 4 });
+      if (this.seesaw) this.addSeesaw();
+      else {
+        this.platform = Bodies.rectangle(PLATFORM.x, PLATFORM.y, PLATFORM.w, PLATFORM.h, {
+          isStatic: true, friction: 0.9, frictionStatic: 1, chamfer: { radius: 6 },
+        });
+        Composite.add(this.engine.world, this.platform);
+      }
       Events.on(this.engine, 'collisionStart', e => this.onCollide(e.pairs));
       Events.on(this.engine, 'collisionActive', e => this.onContact(e.pairs));
 
@@ -104,6 +115,72 @@
     }
 
     get active() { return this.players[this.turn]; }
+
+    // The plank is static as far as Matter knows; applySeesaw turns it by hand. (A pinned dynamic plank
+    // jitters against its pin, and that jitter drags resting blocks downhill.)
+    addSeesaw() {
+      const S = SEESAW;
+      this.plank = Bodies.rectangle(S.x, S.y, S.w, S.h, {
+        friction: 0.9, frictionStatic: 1, density: SEESAW_DENSITY, chamfer: { radius: 5 },
+      });
+      this.plankI = this.plank.inertia; // read while it's still dynamic
+      Body.setStatic(this.plank, true);
+      this.plank.isPlank = true;
+      this.plankSpin = 0;
+      Composite.add(this.engine.world, this.plank);
+    }
+
+    // Add up how hard everything touching the plank pushed on it this tick, and turn it to match.
+    // A spring pulls it back toward level, so one block off-center tilts it a little rather than all the way.
+    applySeesaw() {
+      const p = this.plank;
+      let torque = 0;
+      for (const pair of this.engine.pairs.list) {
+        if (!pair.isActive) continue;
+        const { parentA, parentB, normal: n, tangent: t } = pair.collision;
+        if (parentA !== p && parentB !== p) continue;
+        const sign = parentA === p ? -1 : 1; // the solver pushes body A by -impulse and body B by +impulse
+        for (let i = 0; i < pair.contactCount; i++) {
+          const c = pair.contacts[i];
+          const jx = n.x * c.normalImpulse + t.x * c.tangentImpulse, jy = n.y * c.normalImpulse + t.y * c.tangentImpulse;
+          torque += sign * ((c.vertex.x - p.position.x) * jy - (c.vertex.y - p.position.y) * jx);
+        }
+      }
+      torque -= SEESAW_SPRING * p.angle;
+      this.plankSpin = (this.plankSpin + torque / this.plankI) * (1 - SEESAW_DAMP);
+      let angle = p.angle + this.plankSpin;
+      if (Math.abs(angle) > SEESAW.tilt) { // an end hits the ground
+        angle = Math.sign(angle) * SEESAW.tilt;
+        const thud = Math.abs(this.plankSpin) * SEESAW.w / 2; // how fast the end was moving
+        if (thud > this.stepHit) { this.stepHit = thud; this.stepHitSize = 120; }
+        this.plankSpin = 0;
+      }
+      Body.setAngle(p, angle, true); // true: the solver sees the plank moving, so it carries what's on it
+    }
+
+    // Matter lets resting blocks creep down any slope: gravity moves them straight down, then the collision
+    // pushes them back out square to the slope, a little further downhill each tick. On the seesaw everything
+    // sits on a slope, so do what static friction would: cancel the downhill part of gravity for blocks that
+    // are resting (not sliding) on a slope gentle enough for their friction to hold.
+    holdOnSlopes() {
+      const gr = this.engine.gravity, held = new Set();
+      for (const pair of this.engine.pairs.list) {
+        if (!pair.isActive) continue;
+        const { parentA, parentB, normal: n } = pair.collision;
+        for (const [o, s, k] of [[parentA, parentB, 1], [parentB, parentA, -1]]) {
+          if (o.isStatic || held.has(o)) continue;
+          const ux = n.x * k, uy = n.y * k; // direction the contact pushes o out
+          if (uy > -0.5 || Math.abs(ux) > pair.friction * -uy) continue; // not underneath o, or too steep to grip
+          const tx = -uy, ty = ux; // along the slope
+          const slip = (o.velocity.x - s.velocity.x) * tx + (o.velocity.y - s.velocity.y) * ty;
+          if (Math.abs(slip) > 0.3) continue;
+          const g = o.mass * gr.y * gr.scale * ty; // gravity's pull along the slope
+          o.force.x -= g * tx;
+          o.force.y -= g * ty;
+          held.add(o);
+        }
+      }
+    }
 
     // ── Turn flow ──────────────────────────────────────────────────
     startTurn(i) {
@@ -305,7 +382,9 @@
     // ── Simulation ─────────────────────────────────────────────────
     step() {
       this.applyMagnets();
+      if (this.plank) this.holdOnSlopes();
       Engine.update(this.engine, TICK);
+      if (this.plank) this.applySeesaw();
       this.time += TICK;
       this.applyGlue();
       this.applyBounces();
@@ -338,7 +417,7 @@
       if (!this.science && this.phase === 'aim' && this.time - this.phaseStart > AIM_TIME) this.drop(this.active.id);
 
       if (this.phase === 'settle') {
-        const moving = this.blocks.some(b => !b.fallen &&
+        const moving = Math.abs(this.plank ? this.plankSpin : 0) > 0.002 || this.blocks.some(b => !b.fallen &&
           (Vector.magnitude(b.velocity) > 0.15 || Math.abs(b.angularVelocity) > 0.005));
         this.calm = moving ? 0 : this.calm + 1;
         const elapsed = this.time - this.phaseStart;
@@ -472,7 +551,7 @@
       for (const parts of groups.values()) {
         const cx = parts.reduce((t, b) => t + b.position.x, 0) / parts.length;
         const cy = parts.reduce((t, b) => t + b.position.y, 0) / parts.length;
-        if (!parts[0].fallen && cy > FALL_Y) {
+        if (!parts[0].fallen && cy > this.fallY) {
           for (const b of parts) b.fallen = true;
           const by = this.active ? this.active.id : null;
           const to = [];
@@ -507,6 +586,7 @@
         target: this.target,
         winner: this.winner,
         science: this.science,
+        seesaw: this.plank ? [r1(this.plank.position.x), r1(this.plank.position.y), r3(this.plank.angle)] : null,
         timeLeft: this.phase === 'aim' && !this.science ? Math.max(0, Math.round(AIM_TIME - (this.time - this.phaseStart))) : null,
         players: this.players.map(p => ({ id: p.id, name: p.name, color: p.color, points: p.points })),
         hover: this.phase === 'aim' ? {
@@ -527,5 +607,5 @@
     }
   }
 
-  return { Game, SHOP, WORLD_W, PLATFORM, TICK, flexSegments };
+  return { Game, SHOP, WORLD_W, PLATFORM, SEESAW, TICK, flexSegments };
 });

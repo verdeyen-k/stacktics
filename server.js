@@ -44,7 +44,7 @@ const cleanName = n => String(n || '').replace(/[^\p{L}\p{N} _'-]/gu, '').trim()
 
 function sendLobby(room) {
   for (const p of room.players) send(p.ws, {
-    t: 'lobby', code: room.code, you: p.id, host: room.host,
+    t: 'lobby', code: room.code, you: p.id, host: room.host, seesaw: room.seesaw,
     players: room.players.map(q => ({ id: q.id, name: q.name })),
     game: room.game ? room.gameNo : 0,
   });
@@ -52,7 +52,7 @@ function sendLobby(room) {
 
 function startGame(room) {
   room.gameNo = (room.gameNo || 0) + 1;
-  room.game = new Game(room.players.map(p => ({ id: p.id, name: p.name })));
+  room.game = new Game(room.players.map(p => ({ id: p.id, name: p.name })), { seesaw: room.seesaw });
   room.last = performance.now();
   room.acc = 0;
   room.ticks = 0;
@@ -96,7 +96,7 @@ wss.on('connection', ws => {
       let code;
       do { code = genCode(); } while (rooms.has(code));
       ws.code = code; ws.pid = 'p' + nextPlayerId++;
-      rooms.set(code, { code, host: ws.pid, players: [{ id: ws.pid, name: cleanName(msg.name), ws }], game: null });
+      rooms.set(code, { code, host: ws.pid, players: [{ id: ws.pid, name: cleanName(msg.name), ws }], game: null, seesaw: !!msg.seesaw });
       sendLobby(rooms.get(code));
 
     } else if (msg.t === 'join') {

@@ -1,5 +1,5 @@
 (() => {
-  const { Game, SHOP, WORLD_W, PLATFORM, TICK, flexSegments } = TowerGame;
+  const { Game, SHOP, WORLD_W, PLATFORM, SEESAW, TICK, flexSegments } = TowerGame;
   const COLORS = ['#ff6b6b', '#4dabf7', '#ffd43b', '#69db7c'];
   const DARK   = ['#c94545', '#2f7fc4', '#d4a514', '#3fae55'];
   const $ = id => document.getElementById(id);
@@ -148,6 +148,17 @@
   nameInput.value = store.get('name') || '';
   const myName = () => { const n = nameInput.value.trim() || 'Player'; store.set('name', n); return n; };
 
+  // Flat platform or seesaw, for whichever way of playing is picked next.
+  let seesaw = store.get('platform') === 'seesaw';
+  const showPlatform = () => { for (const b of $('platform-pick').children) b.classList.toggle('on', (b.dataset.p === 'seesaw') === seesaw); };
+  $('platform-pick').onclick = e => {
+    if (!e.target.dataset.p) return;
+    seesaw = e.target.dataset.p === 'seesaw';
+    store.set('platform', e.target.dataset.p);
+    showPlatform();
+  };
+  showPlatform();
+
   // ── Session: either a local Game or a server connection ─────────
   let session = null;
   let ws = null;
@@ -192,8 +203,8 @@
 
   $('btn-science').onclick = () => startLocal(['Scientist'], true);
 
-  function startLocal(names, science = false) {
-    const game = new Game(names.map((name, i) => ({ id: 'L' + i, name })), { science });
+  function startLocal(names, science = false, onSeesaw = seesaw) {
+    const game = new Game(names.map((name, i) => ({ id: 'L' + i, name })), { science, seesaw: onSeesaw });
     let acc = 0;
     session = {
       mode: 'local', names, science,
@@ -217,7 +228,7 @@
         handleEvents(game.drainEvents(), snap);
         return snap;
       },
-      rematch() { startLocal(names, science); },
+      rematch() { startLocal(names, science, onSeesaw); },
       quit() { session = null; show('menu'); },
     };
     resetView();
@@ -253,7 +264,7 @@
   }
   const sendNet = msg => { if (ws && ws.readyState === 1) ws.send(JSON.stringify(msg)); };
 
-  $('btn-create').onclick = () => { $('menu-error').textContent = ''; connect({ t: 'create', name: myName() }); };
+  $('btn-create').onclick = () => { $('menu-error').textContent = ''; connect({ t: 'create', name: myName(), seesaw }); };
   $('btn-join').onclick = () => {
     const code = $('join-code').value.trim().toUpperCase();
     if (code.length !== 4) { $('menu-error').textContent = 'Enter the 4-letter room code.'; return; }
@@ -275,6 +286,7 @@
         return;
       }
       $('lobby-code').textContent = msg.code;
+      $('lobby-seesaw').hidden = !msg.seesaw;
       const list = $('lobby-players');
       list.innerHTML = '';
       msg.players.forEach((p, i) => {
@@ -330,7 +342,9 @@
           if (da > Math.PI) da -= 2 * Math.PI; else if (da < -Math.PI) da += 2 * Math.PI;
           return [bl[0], pb[1] + (nb[1] - pb[1]) * k, pb[2] + (nb[2] - pb[2]) * k, pb[3] + da * k, ...bl.slice(4)];
         });
-        return { ...latest, blocks };
+        const sa = a.s.seesaw, sb = b.s.seesaw;
+        const seesaw = sa && sb ? [sb[0], sb[1], sa[2] + (sb[2] - sa[2]) * k] : latest.seesaw;
+        return { ...latest, blocks, seesaw };
       },
       rematch() { sendNet({ t: 'rematch' }); },
       quit() { const s = ws; ws = null; session = null; if (s) s.close(); show('menu'); },
@@ -444,6 +458,34 @@
     ctx.arcTo(x, y + h, x, y, r);
     ctx.arcTo(x, y, x + w, y, r);
     ctx.closePath();
+  }
+
+  // A pedestal wide enough for the plank's ends to rest on at full tilt, a wedge it pivots on, and the plank.
+  function drawSeesaw([x, y, a]) {
+    const S = SEESAW, half = S.w / 2;
+    const ground = S.y + half * Math.sin(S.tilt) + (S.h / 2) * Math.cos(S.tilt);
+    ctx.fillStyle = '#3a3170';
+    ctx.beginPath();
+    ctx.moveTo(S.x - half, ground); ctx.lineTo(S.x + half, ground);
+    ctx.lineTo(S.x + 60, 1200); ctx.lineTo(S.x - 60, 1200);
+    ctx.fill();
+    ctx.fillStyle = '#6c60b4';
+    ctx.beginPath();
+    ctx.moveTo(S.x, S.y); ctx.lineTo(S.x + 30, ground + 1); ctx.lineTo(S.x - 30, ground + 1);
+    ctx.fill();
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(a);
+    roundRect(-half, -S.h / 2, S.w, S.h, 5);
+    ctx.fillStyle = '#9b8fd6';
+    ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,0.25)';
+    ctx.fillRect(-half + 6, -S.h / 2 + 3, S.w - 12, 3);
+    ctx.beginPath();
+    ctx.arc(0, 0, 3.5, 0, Math.PI * 2);
+    ctx.fillStyle = '#3a3170';
+    ctx.fill();
+    ctx.restore();
   }
 
   function drawBlock(x, y, a, bw, bh, c, flags, alpha = 1) {
@@ -620,17 +662,20 @@
     }
     ctx.globalAlpha = 1;
 
-    // Pedestal + platform
-    ctx.fillStyle = '#3a3170';
-    ctx.beginPath();
-    ctx.moveTo(PLATFORM.x - 90, 30); ctx.lineTo(PLATFORM.x + 90, 30);
-    ctx.lineTo(PLATFORM.x + 55, 1200); ctx.lineTo(PLATFORM.x - 55, 1200);
-    ctx.fill();
-    roundRect(PLATFORM.x - PLATFORM.w / 2, 0, PLATFORM.w, PLATFORM.h, 6);
-    ctx.fillStyle = '#9b8fd6';
-    ctx.fill();
-    ctx.fillStyle = 'rgba(255,255,255,0.25)';
-    ctx.fillRect(PLATFORM.x - PLATFORM.w / 2 + 6, 3, PLATFORM.w - 12, 5);
+    if (snap.seesaw) drawSeesaw(snap.seesaw);
+    else {
+      // Pedestal + platform
+      ctx.fillStyle = '#3a3170';
+      ctx.beginPath();
+      ctx.moveTo(PLATFORM.x - 90, 30); ctx.lineTo(PLATFORM.x + 90, 30);
+      ctx.lineTo(PLATFORM.x + 55, 1200); ctx.lineTo(PLATFORM.x - 55, 1200);
+      ctx.fill();
+      roundRect(PLATFORM.x - PLATFORM.w / 2, 0, PLATFORM.w, PLATFORM.h, 6);
+      ctx.fillStyle = '#9b8fd6';
+      ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,0.25)';
+      ctx.fillRect(PLATFORM.x - PLATFORM.w / 2 + 6, 3, PLATFORM.w - 12, 5);
+    }
 
     // Height marker
     const top = towerTop(snap);
