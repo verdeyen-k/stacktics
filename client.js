@@ -64,11 +64,13 @@
     startLocal(names);
   };
 
-  function startLocal(names) {
-    const game = new Game(names.map((name, i) => ({ id: 'L' + i, name })));
+  $('btn-science').onclick = () => startLocal(['Scientist'], true);
+
+  function startLocal(names, science = false) {
+    const game = new Game(names.map((name, i) => ({ id: 'L' + i, name })), { science });
     let acc = 0;
     session = {
-      mode: 'local', names,
+      mode: 'local', names, science,
       get me() { return game.active ? game.active.id : null; }, // whoever's turn it is holds the phone
       isHost: true,
       act(a, d = {}) {
@@ -77,6 +79,7 @@
         if (a === 'rotate') game.rotate(pid, d.dir);
         if (a === 'buy') game.buy(pid, d.item);
         if (a === 'drop') game.drop(pid);
+        if (a === 'clear') game.clear(pid);
       },
       update(dt) {
         acc = Math.min(acc + dt, 250);
@@ -85,11 +88,23 @@
         handleEvents(game.drainEvents(), snap);
         return snap;
       },
-      rematch() { startLocal(names); },
+      rematch() { startLocal(names, science); },
       quit() { session = null; show('menu'); },
     };
     resetView();
+    setScienceUI(science);
     show('game');
+  }
+
+  // Science mode hides scoring and shows power-ups as free toggles.
+  function setScienceUI(on) {
+    $('scores').hidden = on;
+    $('btn-clear').hidden = !on;
+    for (const b of shopEl.children) {
+      b.querySelector('.cost').textContent = on ? 'free' : `★${SHOP[b.dataset.item].cost}`;
+      b.hidden = on && b.dataset.item === 'rush';
+    }
+    shopEl.classList.toggle('science', on);
   }
 
   // Online
@@ -127,7 +142,7 @@
       if (!session || session.mode !== 'net') session = makeNetSession();
       Object.assign(session, { me: msg.you, isHost: msg.host === msg.you, code: msg.code });
       if (msg.game) {
-        if (session.gameNo !== msg.game) { session.gameNo = msg.game; session.buf = []; resetView(); show('game'); }
+        if (session.gameNo !== msg.game) { session.gameNo = msg.game; session.buf = []; resetView(); setScienceUI(false); show('game'); }
         return;
       }
       $('lobby-code').textContent = msg.code;
@@ -228,7 +243,7 @@
       }
       if (e.type === 'buy') {
         const p = playerOf(snap, e.player), item = SHOP[e.item];
-        if (p) toast(`${p.name}: ${item.icon} ${item.label}!`, COLORS[p.color]);
+        if (p && !snap.science) toast(`${p.name}: ${item.icon} ${item.label}!`, COLORS[p.color]);
       }
       if (e.type === 'rushed') {
         const p = playerOf(snap, e.player);
@@ -501,7 +516,8 @@
     let banner = '', timer = '';
     if (snap.phase === 'aim' && active) {
       banner = session.mode === 'local' ? `${active.name}'s turn` : mine ? 'Your turn — drag to aim' : `${active.name} is aiming…`;
-      if (snap.timeLeft < 10000) timer = `${Math.ceil(snap.timeLeft / 1000)}s`;
+      if (snap.science) banner = '🔬 Science mode: everything is free';
+      if (snap.timeLeft != null && snap.timeLeft < 10000) timer = `${Math.ceil(snap.timeLeft / 1000)}s`;
     } else if (snap.phase === 'settle') banner = 'Wobble…';
     if ($('banner-text').textContent !== banner) $('banner-text').textContent = banner;
     if ($('banner-timer').textContent !== timer) $('banner-timer').textContent = timer;
@@ -515,7 +531,9 @@
       const badge = it === 'long' && hv && hv.len > 1 ? `×${hv.len}` : '';
       if (b.dataset.badge !== badge) { b.dataset.badge = badge; b.querySelector('.cnt').textContent = badge; }
       b.classList.toggle('owned', owned && mine);
-      b.disabled = !mine || !hv || !SHOP[it].ok(hv) || !me || me.points < SHOP[it].cost;
+      b.disabled = snap.science
+        ? !hv || (!owned && !SHOP[it].ok(hv) && !['long', 'small', 'big'].includes(it)) // toggles; Long cycles, sizes swap
+        : !mine || !hv || !SHOP[it].ok(hv) || !me || me.points < SHOP[it].cost;
     }
     for (const id of ['btn-drop', 'btn-rot-l', 'btn-rot-r']) $(id).disabled = !mine;
     $('controls').style.opacity = mine || snap.phase === 'over' ? 1 : 0.55;
@@ -579,6 +597,7 @@
   });
 
   $('btn-quit').onclick = () => { $('quit-confirm').hidden = false; };
+  $('btn-clear').onclick = () => session && session.act('clear');
   $('btn-quit-no').onclick = () => { $('quit-confirm').hidden = true; };
   $('btn-quit-yes').onclick = () => session && session.quit();
   $('btn-over-menu').onclick = () => session && session.quit();

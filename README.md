@@ -22,7 +22,8 @@ npm install
 npm start          # http://localhost:3002
 ```
 
-- **Play on this phone**: pass-and-play for 2–4 players; the physics runs in the browser.
+- **Play on this device**: pass-and-play for 2–4 players; the physics runs in the browser.
+- **🔬 Science mode**: a solo sandbox for learning how the pieces behave. There are no timers or scores, power-ups are free toggles that stay on between drops, and 🧹 clears the platform.
 - **Online**: create a room, and friends join with the 4-letter code (up to 4 players). The server runs the physics so everyone sees the same tower.
 
 To play from a phone on your Wi-Fi, open `http://<your-PC-IP>:3002`. Under WSL2 you need mirrored networking

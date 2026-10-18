@@ -53,6 +53,7 @@
   class Game {
     constructor(players, opts = {}) {
       this.target  = opts.target || TARGET;
+      this.science = !!opts.science; // sandbox: no timers, no scoring, power-ups are free toggles
       this.players = players.map((p, i) => ({ id: p.id, name: p.name, color: i, points: 0 }));
       this.events  = [];
       this.time    = 0;
@@ -79,6 +80,12 @@
       this.turn = i;
       this.phase = 'aim';
       this.phaseStart = this.time;
+      if (this.science) {
+        // Keep the last setup so an experiment can be repeated; blocks are always the standard size.
+        this.hover = this.hover ? { ...this.hover } : { x: WORLD_W / 2, angle: 0, base: BASE_SIZE, scale: 1, len: 1,
+          sizeMod: null, glue: false, magnet: false, sponge: false, rush: false };
+        return;
+      }
       const base = BASE_SIZE * (0.85 + Math.random() * 0.3);
       this.hover = { x: WORLD_W / 2, angle: 0, base, scale: 1, len: 1, sizeMod: null,
                      glue: false, magnet: false, sponge: false, rush: false };
@@ -126,12 +133,37 @@
 
     buy(pid, item) {
       if (!this.canAct(pid) || !SHOP[item]) return;
+      if (this.science) { this.toggle(item); this.aim(pid, this.hover.x); return; }
       const p = this.active, h = this.hover, it = SHOP[item];
       if (p.points < it.cost || !it.ok(h)) return;
       p.points -= it.cost;
       it.apply(h);
       this.aim(pid, h.x); // re-clamp in case the block grew
       this.events.push({ type: 'buy', player: pid, item });
+    }
+
+    // Science mode: power-ups switch on and off for free. Long steps ×2, ×4… then back to ×1.
+    toggle(item) {
+      const h = this.hover, it = SHOP[item];
+      if (item === 'rush') return;
+      if (item === 'small' || item === 'big') {
+        const was = h.sizeMod;
+        h.sizeMod = null; h.scale = 1;
+        if (was !== item && it.ok(h)) it.apply(h);
+      } else if (item === 'long') {
+        if (it.ok(h)) it.apply(h); else h.len = 1;
+      } else if (h[item]) h[item] = false;
+      else if (it.ok(h)) it.apply(h);
+    }
+
+    clear(pid) {
+      if (!this.science || !this.canAct(pid)) return;
+      const world = this.engine.world;
+      for (const c of this.glues) Composite.remove(world, c);
+      for (const b of this.blocks) Composite.remove(world, b);
+      this.glues = [];
+      this.blocks = [];
+      this.pendingGlue.length = 0;
     }
 
     drop(pid) {
@@ -148,10 +180,11 @@
       this.rush = h.rush;
       Composite.add(this.engine.world, body);
       this.blocks.push(body);
+      this.events.push({ type: 'drop', player: pid });
+      if (this.science) { this.startTurn(this.turn); return; } // no waiting: the next block is ready at once
       this.phase = 'settle';
       this.phaseStart = this.time;
       this.calm = 0;
-      this.events.push({ type: 'drop', player: pid });
     }
 
     removePlayer(pid) {
@@ -180,7 +213,7 @@
       this.applyGlue();
       this.checkFalls();
 
-      if (this.phase === 'aim' && this.time - this.phaseStart > AIM_TIME) this.drop(this.active.id);
+      if (!this.science && this.phase === 'aim' && this.time - this.phaseStart > AIM_TIME) this.drop(this.active.id);
 
       if (this.phase === 'settle') {
         const moving = this.blocks.some(b => !b.fallen &&
@@ -260,7 +293,7 @@
         b.fallen = true;
         const by = this.active ? this.active.id : null;
         const to = [];
-        if (this.phase !== 'over') {
+        if (this.phase !== 'over' && !this.science) {
           for (const p of this.players) if (p.id !== by) { p.points++; to.push(p.id); }
         }
         this.events.push({ type: 'fall', x: r1(b.position.x), y: r1(b.position.y), by, to });
@@ -288,7 +321,8 @@
         turn: this.active ? this.active.id : null,
         target: this.target,
         winner: this.winner,
-        timeLeft: this.phase === 'aim' ? Math.max(0, Math.round(AIM_TIME - (this.time - this.phaseStart))) : null,
+        science: this.science,
+        timeLeft: this.phase === 'aim' && !this.science ? Math.max(0, Math.round(AIM_TIME - (this.time - this.phaseStart))) : null,
         players: this.players.map(p => ({ id: p.id, name: p.name, color: p.color, points: p.points })),
         hover: this.phase === 'aim' ? {
           ...h, x: r1(h.x), angle: r3(h.angle), y: r1(this.hoverY()),
